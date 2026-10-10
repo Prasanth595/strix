@@ -22,3 +22,47 @@ export LLM_API_KEY="sk-ant-..."
 1. Go to [console.anthropic.com](https://console.anthropic.com)
 2. Navigate to API Keys
 3. Create a new key
+
+## Workload Identity Federation (no API key)
+
+Strix can authenticate to Anthropic with [Workload Identity Federation](https://platform.claude.com/docs/en/manage-claude/workload-identity-federation) instead of a static key. It exchanges a JWT from your identity provider for a short-lived access token and re-exchanges it before it expires, so long scans keep running. The token is held in memory only.
+
+Set the same variables the Anthropic SDKs read, and leave `LLM_API_KEY` unset (an API key always wins):
+
+```bash
+export STRIX_LLM="anthropic/claude-sonnet-4-6"
+export ANTHROPIC_FEDERATION_RULE_ID="fdrl_..."
+export ANTHROPIC_ORGANIZATION_ID="00000000-0000-0000-0000-000000000000"
+export ANTHROPIC_SERVICE_ACCOUNT_ID="svac_..."
+export ANTHROPIC_WORKSPACE_ID="wrkspc_..."        # required if the rule covers several workspaces
+export ANTHROPIC_IDENTITY_TOKEN_FILE="/var/run/secrets/anthropic.com/token"
+```
+
+Strix re-reads `ANTHROPIC_IDENTITY_TOKEN_FILE` on every exchange, so the file must hold a fresh JWT each time (Kubernetes projected tokens rotate automatically). `ANTHROPIC_IDENTITY_TOKEN` (a literal JWT) also works for short runs.
+
+Federation applies only to models that call Anthropic's API directly (`anthropic/...` or a bare `claude-...` name). Claude through Bedrock, Vertex AI, or OpenRouter keeps that provider's authentication.
+
+### GitHub Actions
+
+Inside a job with `id-token: write` and no token file configured, Strix fetches a fresh GitHub OIDC token (audience `https://api.anthropic.com`) for each exchange:
+
+```yaml
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  strix:
+    runs-on: ubuntu-latest
+    env:
+      STRIX_LLM: anthropic/claude-sonnet-4-6
+      ANTHROPIC_FEDERATION_RULE_ID: fdrl_...
+      ANTHROPIC_ORGANIZATION_ID: 00000000-0000-0000-0000-000000000000
+      ANTHROPIC_SERVICE_ACCOUNT_ID: svac_...
+      ANTHROPIC_WORKSPACE_ID: wrkspc_...
+    steps:
+      - uses: actions/checkout@v5
+      - run: strix -n -t ./ --scan-mode quick
+```
+
+`run.json` records `auth_mode: workload_identity` for federated runs. If an exchange is denied, the response is an opaque `401`; the reason is listed on the Console's **Settings → Workload identity → Authentication history** page.
