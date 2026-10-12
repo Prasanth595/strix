@@ -393,13 +393,19 @@ async def _run_agent_loop(
                 interrupt=False,
             )
 
-        await coordinator.consume_pending(agent_id)
+        _, items = await coordinator.consume_pending(agent_id, include_items=True)
+        history = (
+            result.to_input_list() if result is not None and session is None else first_cycle_input
+        )
+        next_input = (
+            [] if session is not None else ItemHelpers.input_to_new_input_list(history) + items
+        )
         with contextlib.suppress(BudgetPausedError):
             result = await _run_until_lifecycle(
                 agent,
                 coordinator,
                 agent_id,
-                initial_input=[],
+                initial_input=next_input,
                 run_config=run_config,
                 context=context,
                 max_turns=max_turns,
