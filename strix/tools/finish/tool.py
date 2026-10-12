@@ -334,6 +334,14 @@ async def finish_scan(
             default=str,
         )
 
+    pending_error = {
+        "success": False,
+        "scan_completed": False,
+        "error": "Cannot finish with pending messages. Review them before finishing the scan.",
+    }
+    if coordinator is not None and isinstance(me, str) and await coordinator.has_pending(me):
+        return json.dumps(pending_error)
+
     result = await asyncio.to_thread(
         _do_finish,
         parent_id=parent_id,
@@ -349,5 +357,9 @@ async def finish_scan(
         and coordinator is not None
         and isinstance(me, str)
     ):
-        await coordinator.set_status(me, "completed")
+        completed, _ = await coordinator.complete_if_no_pending(me)
+        if not completed:
+            # A message arrived while the draft summary was being persisted.
+            # Keep running so the root can reconcile it and finalize again.
+            return json.dumps(pending_error)
     return json.dumps(result, ensure_ascii=False, default=str)
