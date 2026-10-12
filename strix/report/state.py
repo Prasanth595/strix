@@ -1180,6 +1180,7 @@ def _estimate_response_cost(kwargs: Any, completion_response: Any) -> float | No
                 return float(value)
     return None
 
+
 def _usage_payload(completion_response: Any) -> dict[str, Any] | None:
     """Token counts as a plain dict, detached from the response's provider metadata."""
     usage: Any = getattr(completion_response, "usage", None)

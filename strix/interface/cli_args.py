@@ -546,7 +546,7 @@ def load_resume_state(args: argparse.Namespace) -> None:
     persisted_subagent_model = state.get("subagent_model")
     if not getattr(args, "subagent_model", None) and persisted_subagent_model:
         args.subagent_model = persisted_subagent_model
-                
+
     agents_path = runtime_state_dir(run_dir) / "agents.json"
     if not agents_path.exists():
         raise ResumeError(

@@ -764,7 +764,7 @@ def make_child_factory(
     chat_completions_tools: bool = False,
     strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
-    subagent_model: str | None = None, 
+    subagent_model: str | None = None,
     supports_images: bool = True,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
@@ -779,7 +779,7 @@ def make_child_factory(
             name=name,
             skills=skills,
             is_root=False,
-            model=subagent_model,         
+            model=subagent_model,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,

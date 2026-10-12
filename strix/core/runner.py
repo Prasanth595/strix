@@ -522,16 +522,16 @@ async def run_strix_scan(
             )
 
         child_agent_builder = make_child_factory(
-             scan_mode=scan_mode,
-             is_whitebox=is_whitebox,
-             is_diff_scoped=is_diff_scoped,
-             interactive=interactive,
-             chat_completions_tools=chat_completions_tools,
-             strict_tool_schemas=strict_tool_schemas,
-             system_prompt_context=scope_context,
-             subagent_model=subagent_model or scan_config.get("subagent_model"),
-             supports_images=supports_images,
-           )
+            scan_mode=scan_mode,
+            is_whitebox=is_whitebox,
+            is_diff_scoped=is_diff_scoped,
+            interactive=interactive,
+            chat_completions_tools=chat_completions_tools,
+            strict_tool_schemas=strict_tool_schemas,
+            system_prompt_context=scope_context,
+            subagent_model=subagent_model or scan_config.get("subagent_model"),
+            supports_images=supports_images,
+        )
 
         async def spawn_child_agent(**kwargs: Any) -> dict[str, Any]:
             return await start_child_agent(

@@ -1,8 +1,7 @@
 import argparse
 from pathlib import Path
-import pytest
 
-from strix.interface.cli_args import parse_arguments, load_resume_state
+from strix.interface.cli_args import load_resume_state, parse_arguments
 
 
 def test_subagent_model_default_none(monkeypatch):
@@ -40,11 +39,10 @@ def test_resume_restores_subagent_model(monkeypatch, tmp_path):
         instruction=None,
         local_sources=[],
     )
-    parser = argparse.ArgumentParser()
 
-    monkeypatch.setattr("strix.report.writer.read_run_record", lambda run_dir: fake_state)
-    monkeypatch.setattr("strix.interface.cli_args.run_dir_for", lambda r: tmp_path)
-    monkeypatch.setattr(Path, "exists", lambda self: True)
+    monkeypatch.setattr("strix.report.writer.read_run_record", lambda _run_dir: fake_state)
+    monkeypatch.setattr("strix.interface.cli_args.run_dir_for", lambda _r: tmp_path)
+    monkeypatch.setattr(Path, "exists", lambda _self: True)
 
     load_resume_state(args)
     assert args.subagent_model == "gpt-4o-mini"
