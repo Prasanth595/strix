@@ -62,15 +62,16 @@ def is_configured() -> bool:
 
 
 def is_anthropic_model(model_name: str) -> bool:
-    """Whether LiteLLM sends ``model_name`` to Anthropic's own API.
+    """Whether ``model_name`` is routed to Anthropic's own API (``anthropic/…``).
 
-    Claude on Bedrock or Vertex carries that provider's prefix and keeps that
-    provider's auth.
+    Only that prefix reaches the LiteLLM route that carries the federated token:
+    a bare ``claude-…`` name goes to the OpenAI route. Claude on Bedrock or
+    Vertex carries that provider's prefix and keeps that provider's auth.
     """
     name = model_name.strip().lower()
     for prefix in ("litellm/", "any-llm/"):
         name = name.removeprefix(prefix)
-    return name.startswith("anthropic/") or ("/" not in name and name.startswith("claude"))
+    return name.startswith("anthropic/")
 
 
 def applies(model_name: str | None, api_key: str | None = None) -> bool:
@@ -301,7 +302,8 @@ def get_valid_token() -> str:
         try:
             _cached = exchange()
         except WifAuthError:
-            if _cached is not None and now < _cached[1] - _MANDATORY_REFRESH_S:
+            # The failed exchange (token command plus HTTP) can take a minute.
+            if _cached is not None and time.time() < _cached[1] - _MANDATORY_REFRESH_S:
                 logger.warning(
                     "Anthropic workload identity refresh failed; using the cached token",
                     exc_info=True,

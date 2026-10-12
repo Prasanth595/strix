@@ -43,7 +43,7 @@ Then check the setup with `strix auth test`: it runs one exchange with the same 
 
 Strix re-reads `ANTHROPIC_IDENTITY_TOKEN_FILE` on every exchange, so the file must hold an unexpired JWT each time. `ANTHROPIC_IDENTITY_TOKEN` (a literal JWT) also works for short runs.
 
-Federation applies only to models that call Anthropic's API directly (`anthropic/...` or a bare `claude-...` name). Claude through Bedrock, Vertex AI, or OpenRouter keeps that provider's authentication.
+Federation applies only to models that call Anthropic's API directly (`anthropic/...`). A bare `claude-...` name isn't routed to Anthropic, so it doesn't federate either. Claude through Bedrock, Vertex AI, or OpenRouter keeps that provider's authentication.
 
 ### Other identity providers
 

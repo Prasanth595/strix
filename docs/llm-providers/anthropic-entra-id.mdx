@@ -13,7 +13,7 @@ This guide covers two kinds of host:
 | Any other Linux host: a laptop or desktop, a local VM, or a VM on-premises or in another public or private cloud | Your Entra user | `strix auth login entra` |
 
 <Note>
-  Federation applies only to models that call Anthropic directly (`anthropic/…` or a bare `claude-…`). **An API key always wins:** if `LLM_API_KEY` is set, in the environment or in the Strix config file, Strix uses it and prints a warning. Federated runs record `"auth_mode": "workload_identity"` in `strix_runs/<run>/run.json`.
+  Federation applies only to `anthropic/…` models, which call Anthropic directly. **An API key always wins:** if `LLM_API_KEY` is set, in the environment or in the Strix config file, Strix uses it and prints a warning. Federated runs record `"auth_mode": "workload_identity"` in `strix_runs/<run>/run.json`.
 </Note>
 
 ## How setup fits together

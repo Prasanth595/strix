@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 import time
 import urllib.parse
 from typing import TYPE_CHECKING, Any
@@ -139,6 +140,42 @@ def test_token_near_expiry_is_refreshed_and_saved() -> None:
     saved = entra_user.read_record()
     assert saved is not None
     assert saved["refresh"] == "refresh-2"
+
+
+@pytest.mark.parametrize("action", ["logout", "login"])
+def test_logout_and_login_wait_for_a_refresh_in_flight(action: str) -> None:
+    entra_user.save_record(_record(expires_at=time.time() + 60))
+    started, release = threading.Event(), threading.Event()
+    body = {"access_token": "access-2", "refresh_token": "refresh-2", "expires_in": 3600}
+
+    def _slow_post(*_args: Any, **_kwargs: Any) -> Any:
+        started.set()
+        assert release.wait(5)
+        return _response(200, body)
+
+    with mock.patch.object(entra_user.requests, "post", side_effect=_slow_post):
+        refresher = threading.Thread(target=entra_user.get_valid_token)
+        refresher.start()
+        assert started.wait(5)
+        if action == "logout":
+            other = threading.Thread(target=entra_user.logout)
+        else:
+            other = threading.Thread(
+                target=entra_user.save_record, args=(_record(access="new-login"),)
+            )
+        other.start()
+        other.join(0.2)
+        assert other.is_alive()  # blocked until the refresh has saved
+        release.set()
+        refresher.join(5)
+        other.join(5)
+
+    saved = entra_user.read_record()
+    if action == "logout":
+        assert saved is None
+    else:
+        assert saved is not None
+        assert saved["access"] == "new-login"
 
 
 def test_not_signed_in_raises() -> None:

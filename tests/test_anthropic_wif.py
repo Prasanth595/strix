@@ -392,12 +392,33 @@ def test_mandatory_refresh_failure_raises() -> None:
         anthropic_wif.get_valid_token()
 
 
+def test_slow_failed_refresh_does_not_serve_an_expired_token() -> None:
+    with (
+        mock.patch.object(anthropic_wif.time, "time", return_value=1000.0),
+        mock.patch.object(anthropic_wif.requests, "post", return_value=_ok()),
+    ):
+        anthropic_wif.get_valid_token()
+    # Expires at 1600. The refresh starts at 1555, inside the advisory window but
+    # outside the mandatory one, and fails only after the token has expired.
+    clock = iter([1555.0, 1555.0, 1610.0, 1610.0])
+
+    def _slow_failure(*_args: Any, **_kwargs: Any) -> Any:
+        raise requests.ConnectionError("down")
+
+    with (
+        mock.patch.object(anthropic_wif.time, "time", side_effect=lambda: next(clock)),
+        mock.patch.object(anthropic_wif.requests, "post", side_effect=_slow_failure),
+        pytest.raises(anthropic_wif.WifAuthError),
+    ):
+        anthropic_wif.get_valid_token()
+
+
 @pytest.mark.parametrize(
     ("model", "expected"),
     [
         ("anthropic/claude-sonnet-5-5", True),
         ("litellm/anthropic/claude-sonnet-5-5", True),
-        ("claude-sonnet-5-5", True),
+        ("claude-sonnet-5-5", False),
         ("bedrock/anthropic.claude-sonnet-5-5", False),
         ("vertex_ai/claude-sonnet-5-5", False),
         ("openrouter/anthropic/claude-sonnet-5-5", False),

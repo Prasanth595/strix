@@ -87,6 +87,12 @@ def read_record() -> dict[str, Any] | None:
 
 
 def save_record(record: dict[str, Any]) -> None:
+    """Store a new sign-in, after any refresh in flight (this or another process)."""
+    with _refresh_guard():
+        _write_record(record)
+
+
+def _write_record(record: dict[str, Any]) -> None:
     write_secret_text(AUTH_PATH, json.dumps(record, indent=2))
 
 
@@ -95,11 +101,15 @@ def is_authenticated() -> bool:
 
 
 def logout() -> bool:
-    """Delete the stored sign-in; return whether there was one."""
-    existed = AUTH_PATH.exists()
-    with contextlib.suppress(OSError):
-        AUTH_PATH.unlink()
-    return existed
+    """Delete the stored sign-in; return whether there was one.
+
+    Waits for any refresh in flight, so the refresh can't recreate the file.
+    """
+    with _refresh_guard():
+        existed = AUTH_PATH.exists()
+        with contextlib.suppress(OSError):
+            AUTH_PATH.unlink()
+        return existed
 
 
 def is_configured() -> bool:
@@ -178,7 +188,7 @@ def get_valid_token() -> str:
             if latest and latest["refresh"] != record["refresh"] and not _near_expiry(latest):
                 return str(latest["access"])
             raise
-        save_record(refreshed)
+        _write_record(refreshed)
         return str(refreshed["access"])
 
 
@@ -271,7 +281,9 @@ def _record_from_token_response(
 
 @contextlib.contextmanager
 def _refresh_guard() -> Generator[None]:
-    """Serialize refreshes within (lock) and across (flock) Strix processes."""
+    """Serialize refreshes, sign-ins and sign-outs within (lock) and across (flock)
+    Strix processes. A refresh holds it from reading the record to saving the new
+    one, so a login or logout can't land in between and be overwritten."""
     with _refresh_lock:
         try:
             import fcntl
