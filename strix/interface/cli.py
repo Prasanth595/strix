@@ -85,7 +85,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     scan_mode = getattr(args, "scan_mode", "deep")
 
-        scan_config: dict[str, Any] = {
+    scan_config: dict[str, Any] = {
         "scan_id": args.run_name,
         "targets": args.targets_info,
         "user_instruction": args.instruction or "",
