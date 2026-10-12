@@ -205,8 +205,9 @@ class ViewerSettings(BaseSettings):
 class AnthropicWifSettings(BaseSettings):
     """Anthropic Workload Identity Federation, under the Anthropic SDKs' own env names.
 
-    The literal ``ANTHROPIC_IDENTITY_TOKEN`` JWT is read straight from the
-    environment instead, so it never lands in the persisted config file.
+    ``ANTHROPIC_IDENTITY_TOKEN_COMMAND`` is Strix-only: a command whose stdout is
+    the JWT. The literal ``ANTHROPIC_IDENTITY_TOKEN`` JWT is read straight from
+    the environment instead, so it never lands in the persisted config file.
     """
 
     model_config = _BASE_CONFIG
@@ -216,6 +217,13 @@ class AnthropicWifSettings(BaseSettings):
     service_account_id: str | None = Field(default=None, alias="ANTHROPIC_SERVICE_ACCOUNT_ID")
     workspace_id: str | None = Field(default=None, alias="ANTHROPIC_WORKSPACE_ID")
     identity_token_file: str | None = Field(default=None, alias="ANTHROPIC_IDENTITY_TOKEN_FILE")
+    identity_token_command: str | None = Field(
+        default=None, alias="ANTHROPIC_IDENTITY_TOKEN_COMMAND"
+    )
+    # Defaults for `strix auth login entra`: the Entra tenant, and the app registration
+    # that is both the OAuth client and the token audience.
+    entra_tenant_id: str | None = Field(default=None, alias="STRIX_ENTRA_TENANT_ID")
+    entra_app_id: str | None = Field(default=None, alias="STRIX_ENTRA_APP_ID")
 
 
 class Settings(BaseSettings):

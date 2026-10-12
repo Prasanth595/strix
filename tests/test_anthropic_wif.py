@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import shlex
+import subprocess
+import sys
+import time
 from typing import TYPE_CHECKING, Any
 from unittest import mock
 
@@ -10,7 +15,7 @@ import pytest
 import requests
 from agents.extensions.models.litellm_model import LitellmModel
 
-from strix.config import anthropic_wif, codex, loader
+from strix.config import anthropic_wif, codex, entra_user, loader
 from strix.config.models import StrixProvider
 
 
@@ -45,13 +50,17 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, token_file: Path)
         "OLLAMA_API_BASE",
         "ANTHROPIC_WORKSPACE_ID",
         "ANTHROPIC_IDENTITY_TOKEN",
+        "ANTHROPIC_IDENTITY_TOKEN_COMMAND",
         "ACTIONS_ID_TOKEN_REQUEST_URL",
         "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+        "STRIX_ENTRA_TENANT_ID",
+        "STRIX_ENTRA_APP_ID",
     ):
         monkeypatch.delenv(key, raising=False)
     for key, value in _WIF_ENV.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("ANTHROPIC_IDENTITY_TOKEN_FILE", str(token_file))
+    monkeypatch.setattr(entra_user, "AUTH_PATH", tmp_path / "entra-auth.json")
     monkeypatch.setattr(loader, "_override", tmp_path / "missing-config.json")
     monkeypatch.setattr(loader, "_cached", None)
     anthropic_wif.reset_cache()
@@ -147,6 +156,185 @@ def test_github_actions_oidc_token_used_without_a_file(monkeypatch: pytest.Monke
         assert anthropic_wif.read_identity_token() == "gh-jwt"
     assert get.call_args.kwargs["params"] == {"audience": "https://api.anthropic.com"}
     assert get.call_args.kwargs["headers"] == {"Authorization": "Bearer gh-req"}
+
+
+def _python_command(code: str) -> str:
+    return shlex.join([sys.executable, "-c", code])
+
+
+def _use_token_command(monkeypatch: pytest.MonkeyPatch, command: str) -> None:
+    monkeypatch.delenv("ANTHROPIC_IDENTITY_TOKEN_FILE")
+    monkeypatch.setattr(loader, "_cached", None)
+    monkeypatch.setenv("ANTHROPIC_IDENTITY_TOKEN_COMMAND", command)
+
+
+def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> Any:
+    return subprocess.CompletedProcess(["cmd"], returncode, stdout, stderr)
+
+
+def test_token_command_used_without_a_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    _use_token_command(monkeypatch, _python_command("print('cmd-jwt')"))
+    assert anthropic_wif.is_configured()
+    assert anthropic_wif.read_identity_token() == "cmd-jwt"
+
+
+def test_token_file_wins_over_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_IDENTITY_TOKEN_COMMAND", "should-not-run")
+    monkeypatch.setattr(loader, "_cached", None)
+    with mock.patch.object(anthropic_wif.subprocess, "run") as run:
+        assert anthropic_wif.read_identity_token() == "jwt-1"
+    run.assert_not_called()
+
+
+def test_token_command_runs_on_every_exchange(monkeypatch: pytest.MonkeyPatch) -> None:
+    _use_token_command(monkeypatch, "issue-token --audience x")
+    outputs = [_completed(stdout="jwt-a\n"), _completed(stdout="jwt-b\n")]
+    with (
+        mock.patch.object(anthropic_wif.subprocess, "run", side_effect=outputs) as run,
+        mock.patch.object(anthropic_wif.requests, "post", return_value=_ok()) as post,
+    ):
+        anthropic_wif.exchange()
+        anthropic_wif.exchange()
+    assert run.call_args.args[0] == ["issue-token", "--audience", "x"]
+    assert run.call_args.kwargs["stdin"] == subprocess.DEVNULL
+    assertions = [call.kwargs["json"]["assertion"] for call in post.call_args_list]
+    assert assertions == ["jwt-a", "jwt-b"]
+
+
+def test_token_command_failure_names_status_and_stderr_but_not_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    code = "import sys; print('secret-jwt'); print('boom', file=sys.stderr); sys.exit(3)"
+    _use_token_command(monkeypatch, _python_command(code))
+    with pytest.raises(anthropic_wif.WifAuthError) as exc:
+        anthropic_wif.read_identity_token()
+    assert "status 3" in str(exc.value)
+    assert "boom" in str(exc.value)
+    assert "secret-jwt" not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("stdout", "message"),
+    [("\n", "printed no token"), ("jwt-a jwt-b\n", "single JWT")],
+)
+def test_token_command_output_must_be_one_jwt(
+    monkeypatch: pytest.MonkeyPatch, stdout: str, message: str
+) -> None:
+    _use_token_command(monkeypatch, "issue-token")
+    with (
+        mock.patch.object(anthropic_wif.subprocess, "run", return_value=_completed(stdout=stdout)),
+        pytest.raises(anthropic_wif.WifAuthError, match=message),
+    ):
+        anthropic_wif.read_identity_token()
+
+
+def test_token_command_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _use_token_command(monkeypatch, str(tmp_path / "no-such-command"))
+    with pytest.raises(anthropic_wif.WifAuthError, match="could not run"):
+        anthropic_wif.read_identity_token()
+
+
+def test_token_command_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    _use_token_command(monkeypatch, "issue-token")
+    timeout = subprocess.TimeoutExpired(["issue-token"], 30)
+    with (
+        mock.patch.object(anthropic_wif.subprocess, "run", side_effect=timeout),
+        pytest.raises(anthropic_wif.WifAuthError, match="timed out"),
+    ):
+        anthropic_wif.read_identity_token()
+
+
+def test_token_command_expands_home_in_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    _use_token_command(monkeypatch, "~/bin/issue-token token")
+    monkeypatch.setenv("HOME", "/home/someone")
+    with mock.patch.object(
+        anthropic_wif.subprocess, "run", return_value=_completed(stdout="jwt\n")
+    ) as run:
+        anthropic_wif.read_identity_token()
+    assert run.call_args.args[0] == ["/home/someone/bin/issue-token", "token"]
+
+
+def test_token_command_persists_and_is_read_from_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text('{"env": {}}', encoding="utf-8")
+    monkeypatch.setattr(loader, "_override", config)
+    command = "issue-token --from-config"
+    _use_token_command(monkeypatch, command)
+    loader.persist_current()
+    saved = json.loads(config.read_text(encoding="utf-8"))["env"]
+    assert saved.get("ANTHROPIC_IDENTITY_TOKEN_COMMAND") == command
+
+    monkeypatch.delenv("ANTHROPIC_IDENTITY_TOKEN_COMMAND")
+    monkeypatch.setattr(loader, "_cached", None)
+    with mock.patch.object(
+        anthropic_wif.subprocess, "run", return_value=_completed(stdout="jwt\n")
+    ) as run:
+        assert anthropic_wif.read_identity_token() == "jwt"
+    assert run.call_args.args[0] == ["issue-token", "--from-config"]
+
+
+def test_empty_env_clears_saved_token_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps({"env": {"ANTHROPIC_IDENTITY_TOKEN_COMMAND": "issue-token"}}), encoding="utf-8"
+    )
+    monkeypatch.setattr(loader, "_override", config)
+    _use_token_command(monkeypatch, "")
+    assert not anthropic_wif.is_configured()
+    loader.persist_current()
+    saved = json.loads(config.read_text(encoding="utf-8"))["env"]
+    assert "ANTHROPIC_IDENTITY_TOKEN_COMMAND" not in saved
+
+
+def _sign_in_to_entra(**overrides: Any) -> None:
+    record = {
+        "type": "oauth",
+        "provider": "entra",
+        "tenant": "tenant-id",
+        "app": "app-id",
+        "access": "entra-jwt",
+        "refresh": "entra-refresh",
+        "expires_at": time.time() + 3600,
+    }
+    record.update(overrides)
+    entra_user.save_record(record)
+
+
+def _without_token_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_IDENTITY_TOKEN_FILE")
+    monkeypatch.setattr(loader, "_cached", None)
+
+
+def test_entra_sign_in_used_without_other_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    _without_token_file(monkeypatch)
+    assert not anthropic_wif.is_configured()
+    _sign_in_to_entra()
+    assert anthropic_wif.is_configured()
+    assert anthropic_wif.read_identity_token() == "entra-jwt"
+
+
+def test_token_command_wins_over_entra_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    _sign_in_to_entra()
+    _use_token_command(monkeypatch, "issue-token")
+    with mock.patch.object(
+        anthropic_wif.subprocess, "run", return_value=_completed(stdout="cmd-jwt\n")
+    ):
+        assert anthropic_wif.read_identity_token() == "cmd-jwt"
+
+
+def test_entra_refresh_failure_names_the_fix(monkeypatch: pytest.MonkeyPatch) -> None:
+    _without_token_file(monkeypatch)
+    _sign_in_to_entra(expires_at=time.time() - 1)
+    refused = entra_user.EntraAuthError("invalid_grant", "invalid_grant: AADSTS70000")
+    with (
+        mock.patch.object(entra_user, "refresh_tokens", side_effect=refused),
+        pytest.raises(anthropic_wif.WifAuthError, match="strix auth login entra"),
+    ):
+        anthropic_wif.read_identity_token()
 
 
 def test_cached_token_reused_until_advisory_window() -> None:

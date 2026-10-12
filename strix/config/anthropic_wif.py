@@ -5,9 +5,12 @@ Configured with the same env vars the Anthropic SDKs read
 (``ANTHROPIC_FEDERATION_RULE_ID``, ``ANTHROPIC_ORGANIZATION_ID``,
 ``ANTHROPIC_SERVICE_ACCOUNT_ID``, ``ANTHROPIC_WORKSPACE_ID``, and
 ``ANTHROPIC_IDENTITY_TOKEN_FILE`` or ``ANTHROPIC_IDENTITY_TOKEN``), so one
-environment serves Strix and any SDK workload alongside it. Inside a GitHub
-Actions job with ``id-token: write`` and no token configured, the JWT is fetched
-from the runner's OIDC endpoint instead.
+environment serves Strix and any SDK workload alongside it. Strix also accepts
+``ANTHROPIC_IDENTITY_TOKEN_COMMAND``, a command whose stdout is the JWT, for IdPs
+that hand out tokens from a local endpoint or CLI rather than a file, and a
+Microsoft Entra ID user sign-in made with ``strix auth login entra``. Inside a
+GitHub Actions job with ``id-token: write`` and no token configured, the JWT is
+fetched from the runner's OIDC endpoint instead.
 
 The minted ``sk-ant-oat01-`` token lives in memory only; it is never persisted.
 """
@@ -16,6 +19,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -23,6 +28,7 @@ from typing import Any, cast
 
 import requests
 
+from strix.config import entra_user
 from strix.config.loader import load_settings
 
 
@@ -77,12 +83,32 @@ def applies(model_name: str | None, api_key: str | None = None) -> bool:
     return is_anthropic_model(model_name) and is_configured()
 
 
+# Identity token sources, in the order Strix tries them.
+SOURCE_FILE = "ANTHROPIC_IDENTITY_TOKEN_FILE"
+SOURCE_COMMAND = "ANTHROPIC_IDENTITY_TOKEN_COMMAND"
+SOURCE_LITERAL = "ANTHROPIC_IDENTITY_TOKEN"
+SOURCE_ENTRA = "Entra ID sign-in (strix auth login entra)"
+SOURCE_GITHUB = "GitHub Actions OIDC"
+
+
+def identity_source() -> str | None:
+    """The source the next exchange reads its JWT from, or None if there is none."""
+    wif = load_settings().anthropic_wif
+    if wif.identity_token_file:
+        return SOURCE_FILE
+    if (wif.identity_token_command or "").strip():
+        return SOURCE_COMMAND
+    if (os.environ.get("ANTHROPIC_IDENTITY_TOKEN") or "").strip():
+        return SOURCE_LITERAL
+    if entra_user.is_configured():
+        return SOURCE_ENTRA
+    if _github_oidc_available():
+        return SOURCE_GITHUB
+    return None
+
+
 def _has_identity_source() -> bool:
-    return bool(
-        load_settings().anthropic_wif.identity_token_file
-        or os.environ.get("ANTHROPIC_IDENTITY_TOKEN")
-        or _github_oidc_available()
-    )
+    return identity_source() is not None
 
 
 def _github_oidc_available() -> bool:
@@ -98,8 +124,10 @@ def read_identity_token() -> str:
     JWTs carrying a ``jti`` are single-use, and projected token files rotate on
     disk, so a cached JWT would be rejected on the next exchange.
     """
-    token_file = load_settings().anthropic_wif.identity_token_file
-    if token_file:
+    wif = load_settings().anthropic_wif
+    source = identity_source()
+    token_file = wif.identity_token_file
+    if source == SOURCE_FILE and token_file:
         try:
             token = Path(token_file).expanduser().read_text(encoding="utf-8").strip()
         except OSError as exc:
@@ -107,14 +135,69 @@ def read_identity_token() -> str:
         if not token:
             raise WifAuthError(f"ANTHROPIC_IDENTITY_TOKEN_FILE {token_file} is empty")
         return token
-    literal = (os.environ.get("ANTHROPIC_IDENTITY_TOKEN") or "").strip()
-    if literal:
-        return literal
-    if _github_oidc_available():
+    if source == SOURCE_COMMAND:
+        return _run_token_command((wif.identity_token_command or "").strip())
+    if source == SOURCE_LITERAL:
+        return (os.environ.get("ANTHROPIC_IDENTITY_TOKEN") or "").strip()
+    if source == SOURCE_ENTRA:
+        try:
+            return entra_user.get_valid_token()
+        except entra_user.EntraAuthError as exc:
+            raise WifAuthError(
+                f"Entra ID sign-in failed ({exc}); run: strix auth login entra"
+            ) from exc
+    if source == SOURCE_GITHUB:
         return _fetch_github_oidc_token()
     raise WifAuthError(
-        "no identity token: set ANTHROPIC_IDENTITY_TOKEN_FILE or ANTHROPIC_IDENTITY_TOKEN"
+        "no identity token: set ANTHROPIC_IDENTITY_TOKEN_FILE, "
+        "ANTHROPIC_IDENTITY_TOKEN_COMMAND or ANTHROPIC_IDENTITY_TOKEN, "
+        "or run: strix auth login entra"
     )
+
+
+def _run_token_command(command: str) -> str:
+    """Run ``ANTHROPIC_IDENTITY_TOKEN_COMMAND`` and return its stdout as the JWT.
+
+    The command is split like a shell would but run without one, so pipelines
+    need an explicit ``sh -c '...'``. Errors never include stdout, which may
+    hold a token.
+    """
+    try:
+        args = shlex.split(command)
+    except ValueError as exc:
+        raise WifAuthError(f"cannot parse ANTHROPIC_IDENTITY_TOKEN_COMMAND: {exc}") from exc
+    if not args:
+        raise WifAuthError("ANTHROPIC_IDENTITY_TOKEN_COMMAND is empty")
+    if args[0].startswith("~"):
+        # Only then: Path() would also turn "./cmd" into a PATH lookup of "cmd".
+        args[0] = str(Path(args[0]).expanduser())
+    try:
+        result = subprocess.run(  # noqa: S603
+            args,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=_TIMEOUT_S,
+            check=False,
+        )
+    except OSError as exc:
+        raise WifAuthError(f"ANTHROPIC_IDENTITY_TOKEN_COMMAND could not run: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise WifAuthError(
+            f"ANTHROPIC_IDENTITY_TOKEN_COMMAND timed out after {_TIMEOUT_S}s"
+        ) from exc
+    if result.returncode != 0:
+        stderr = result.stderr.strip().splitlines()
+        detail = f": {stderr[-1][:200]}" if stderr else ""
+        raise WifAuthError(
+            f"ANTHROPIC_IDENTITY_TOKEN_COMMAND exited with status {result.returncode}{detail}"
+        )
+    token = result.stdout.strip()
+    if not token:
+        raise WifAuthError("ANTHROPIC_IDENTITY_TOKEN_COMMAND printed no token")
+    if any(char.isspace() for char in token):
+        raise WifAuthError("ANTHROPIC_IDENTITY_TOKEN_COMMAND must print a single JWT")
+    return token
 
 
 def _fetch_github_oidc_token() -> str:
@@ -136,13 +219,17 @@ def _fetch_github_oidc_token() -> str:
     return value
 
 
-def exchange() -> tuple[str, float]:
-    """Run one ``jwt-bearer`` exchange; return ``(access_token, expires_at)``."""
+def exchange(assertion: str | None = None) -> tuple[str, float]:
+    """Run one ``jwt-bearer`` exchange; return ``(access_token, expires_at)``.
+
+    ``assertion`` is the IdP JWT to present; by default it is read from the
+    configured source.
+    """
     settings = load_settings()
     wif = settings.anthropic_wif
     body: dict[str, str] = {
         "grant_type": GRANT_TYPE,
-        "assertion": read_identity_token(),
+        "assertion": assertion or read_identity_token(),
         "federation_rule_id": wif.federation_rule_id or "",
         "organization_id": wif.organization_id or "",
         "service_account_id": wif.service_account_id or "",
