@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 import pytest
 
-from strix.interface.cli_args import parse_arguments, _load_resume_state
+from strix.interface.cli_args import parse_arguments, load_resume_state
 
 
 def test_subagent_model_default_none(monkeypatch):
@@ -25,7 +25,7 @@ def test_subagent_model_flag_parsed(monkeypatch):
 def test_resume_restores_subagent_model(monkeypatch, tmp_path):
     """Verify _load_resume_state restores persisted subagent_model."""
     fake_state = {
-        "targets_info": [{"type": "domain", "original": "example.com"}],
+        "targets_info": [{"type": "domain", "original": "example.com", "details": {}}],
         "subagent_model": "gpt-4o-mini",
         "scan_mode": "deep",
     }
@@ -37,12 +37,14 @@ def test_resume_restores_subagent_model(monkeypatch, tmp_path):
         diff_scope="auto",
         targets_info=[],
         workspace_mount=None,
+        instruction=None,
+        local_sources=[],
     )
     parser = argparse.ArgumentParser()
 
     monkeypatch.setattr("strix.report.writer.read_run_record", lambda run_dir: fake_state)
-    monkeypatch.setattr("strix.core_paths.run_dir_for", lambda r: tmp_path)
+    monkeypatch.setattr("strix.interface.cli_args.run_dir_for", lambda r: tmp_path)
     monkeypatch.setattr(Path, "exists", lambda self: True)
 
-    _load_resume_state(args, parser)
+    load_resume_state(args)
     assert args.subagent_model == "gpt-4o-mini"
