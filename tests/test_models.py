@@ -168,6 +168,14 @@ def test_resolve_api_type_follows_the_catalog_not_the_base_url(
         assert uses_chat_completions_tool_schema(model, settings) is True, model
 
 
+def test_litellm_models_use_chat_completions_even_when_catalog_lists_responses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(models, "_catalog_supported_endpoints", lambda _model: ["/v1/responses"])
+
+    assert resolve_api_type("anthropic/claude-sonnet-4-5", Settings()) == "chat_completions"
+
+
 def test_resolve_api_type_explicit_override_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     _settings(monkeypatch, "gpt-daybreak-blue-latest", "https://gateway.example/v1")
     monkeypatch.setenv("STRIX_API_TYPE", "chat_completions")
