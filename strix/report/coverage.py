@@ -109,7 +109,7 @@ _SKILL_PHRASINGS: dict[str, tuple[str, ...]] = {
         "data exposure",
     ),
     "insecure_deserialization": ("deserialization",),
-    "insecure_file_uploads": ("file upload",),
+    "insecure_file_uploads": ("file upload", "file uploads"),
     "llm_prompt_injection": ("prompt injection",),
     "mass_assignment": ("mass assignment", "parameter binding"),
     "nosql_injection": ("nosql",),
