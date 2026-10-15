@@ -806,11 +806,22 @@ async def test_salvage_stream_to_session_preserves_full_history(tmp_path: Any) -
         "recon turn 2",
     ]
 
+    # A replayed full history starts with the already-persisted session items.
+    replayed_history = [
+        *stored,
+        {"role": "assistant", "content": "recovered turn"},
+    ]
+    await execution._salvage_stream_to_session(
+        session, stored, _SalvageStream(replayed_history), "child"
+    )
+    stored = [cast("dict[str, Any]", i) for i in await session.get_items()]
+    assert stored == replayed_history
+
     # A crash with nothing new to salvage leaves the session untouched.
     await execution._salvage_stream_to_session(
         session, list(await session.get_items()), _SalvageStream([]), "child"
     )
-    assert len(await session.get_items()) == 3
+    assert len(await session.get_items()) == len(replayed_history)
     session.close()
 
 

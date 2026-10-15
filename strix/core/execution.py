@@ -172,7 +172,7 @@ async def _salvage_stream_to_session(
         logger.exception("could not build salvage history for %s", agent_id)
         return
     pre_len = len(pre_run_items)
-    if pre_len > 0 and len(replay) >= pre_len and replay[-pre_len:] == pre_run_items:
+    if pre_len > 0 and len(replay) >= pre_len and replay[:pre_len] == pre_run_items:
         desired = replay
     else:
         desired = list(pre_run_items) + replay
