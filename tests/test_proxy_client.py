@@ -9,9 +9,11 @@ call at a time against the shared client.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from caido_sdk_client.errors import OperationUserError
 
 from strix.runtime.caido_handle import CaidoBootstrapHandle
 from strix.tools.proxy import caido_api, tools
@@ -227,3 +229,35 @@ async def test_ctx_client_degrades_when_bootstrap_failed() -> None:
 
     handle = CaidoBootstrapHandle(asyncio.ensure_future(_bootstrap()))
     assert await tools._ctx_client(cast("Any", _Ctx({"caido_client": handle}))) is None
+
+
+async def test_existing_request_ids_queries_current_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient("host")
+    looked_up: list[str] = []
+
+    async def get_request_with_client(passed_client: Any, request_id: str) -> Any:
+        assert passed_client is client
+        looked_up.append(request_id)
+        if request_id == "1042":
+            return SimpleNamespace(request=SimpleNamespace(id="1042"))
+        return None
+
+    monkeypatch.setattr(caido_api, "get_request_with_client", get_request_with_client)
+
+    existing = await tools.existing_request_ids(
+        cast("Any", _Ctx({"caido_client": client})),
+        ["1042", "1088"],
+    )
+
+    assert existing == {"1042"}
+    assert looked_up == ["1042", "1088"]
+
+
+def test_err_logs_caido_errors_as_warnings(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("WARNING", logger="strix.tools.proxy.tools"):
+        tools._err("list_requests", OperationUserError(""))
+
+    [record] = caplog.records
+    assert record.levelname == "WARNING"

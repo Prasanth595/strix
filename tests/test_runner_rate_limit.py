@@ -53,6 +53,7 @@ async def _run_scan_raising(
             timeout=300,
             prompt_cache=True,
             extra_headers=None,
+            extra_body=None,
         ),
         runtime=types.SimpleNamespace(max_context_images=3),
     )
