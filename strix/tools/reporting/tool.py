@@ -1880,10 +1880,6 @@ def _build_dependency_evidence(
         evidence += f"\n\n**Usage analysis:** {label}."
         if reachability_evidence and reachability_evidence.strip():
             evidence += f" {reachability_evidence.strip()}"
-        evidence += (
-            " This is a prioritization signal from static analysis, not a"
-            " proof of exploitability or of safety."
-        )
     return evidence
 
 
@@ -1909,6 +1905,8 @@ async def _do_create_dependency(  # noqa: PLR0912, PLR0915
     manifest_path: str | None = None,
     reachability: str = "unknown",
     reachability_evidence: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    fix_verification: str | None = None,
     contextual_cvss_breakdown: dict[str, str] | None = None,
     contextual_cvss_reasoning: str | None = None,
     agent_id: str | None = None,
@@ -1950,6 +1948,16 @@ async def _do_create_dependency(  # noqa: PLR0912, PLR0915
     manifest_err = _validate_manifest_path(manifest_path)
     if manifest_err:
         errors.append(manifest_err)
+
+    parsed_locations = _normalize_code_locations(code_locations)
+    if parsed_locations:
+        errors.extend(_validate_code_locations(parsed_locations))
+    elif code_locations:
+        errors.append(
+            "code_locations were dropped as unusable - every location needs a relative "
+            "'file' and an integer 'start_line'"
+        )
+    errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
 
     reachability = (reachability or "unknown").strip().lower()
     if reachability not in _VALID_REACHABILITY:
@@ -2020,6 +2028,7 @@ async def _do_create_dependency(  # noqa: PLR0912, PLR0915
 
         from strix.report.dedupe import check_duplicate
 
+        existing = report_state.get_existing_vulnerabilities()
         candidate = {
             "title": title,
             "description": description,
@@ -2028,43 +2037,41 @@ async def _do_create_dependency(  # noqa: PLR0912, PLR0915
             "dependency_metadata": dependency_metadata,
             "technical_analysis": technical_analysis,
         }
-        # Same race as create_vulnerability_report: the duplicate check awaits an LLM
-        # call, so read, check and store under one lock.
-        async with report_state.dedupe_lock:
-            existing = report_state.get_existing_vulnerabilities()
-            dedupe = await check_duplicate(candidate, existing)
-            if dedupe.get("is_duplicate"):
-                duplicate_id = dedupe.get("duplicate_id", "")
-                return {
-                    "success": False,
-                    "error": (
-                        f"Potential duplicate (id={duplicate_id[:8]}...) — "
-                        "do not re-report the same dependency finding"
-                    ),
-                    "duplicate_of": duplicate_id,
-                    "confidence": dedupe.get("confidence", 0.0),
-                    "reason": dedupe.get("reason", ""),
-                }
+        dedupe = await check_duplicate(candidate, existing)
+        if dedupe.get("is_duplicate"):
+            duplicate_id = dedupe.get("duplicate_id", "")
+            return {
+                "success": False,
+                "error": (
+                    f"Potential duplicate (id={duplicate_id[:8]}...) — "
+                    "do not re-report the same dependency finding"
+                ),
+                "duplicate_of": duplicate_id,
+                "confidence": dedupe.get("confidence", 0.0),
+                "reason": dedupe.get("reason", ""),
+            }
 
-            report_id = report_state.add_vulnerability_report(
-                title=title,
-                description=description,
-                severity=severity,
-                impact=impact,
-                target=target,
-                technical_analysis=technical_analysis,
-                remediation_steps=remediation_steps,
-                evidence=evidence,
-                assumptions=assumptions,
-                fix_effort=fix_effort,
-                cvss=cvss_score if advisory_cvss is not None else None,
-                cve=parsed_cve,
-                cwe=cwe,
-                finding_class="dependency_cve",
-                dependency_metadata=dependency_metadata,
-                agent_id=agent_id if isinstance(agent_id, str) else None,
-                agent_name=agent_name if isinstance(agent_name, str) else None,
-            )
+        report_id = report_state.add_vulnerability_report(
+            title=title,
+            description=description,
+            severity=severity,
+            impact=impact,
+            target=target,
+            technical_analysis=technical_analysis,
+            remediation_steps=remediation_steps,
+            evidence=evidence,
+            assumptions=assumptions,
+            fix_effort=fix_effort,
+            cvss=cvss_score if advisory_cvss is not None else None,
+            cve=parsed_cve,
+            cwe=cwe,
+            code_locations=parsed_locations,
+            fix_verification=fix_verification,
+            finding_class="dependency_cve",
+            dependency_metadata=dependency_metadata,
+            agent_id=agent_id if isinstance(agent_id, str) else None,
+            agent_name=agent_name if isinstance(agent_name, str) else None,
+        )
     except Exception as e:
         logger.exception("create_dependency_report persistence failed")
         return {
@@ -2114,6 +2121,8 @@ async def create_dependency_report(
     dependency_path: str | None = None,
     reachability: str = "unknown",
     reachability_evidence: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    fix_verification: str | None = None,
     contextual_cvss_breakdown: dict[str, str] | None = None,
     contextual_cvss_reasoning: str | None = None,
 ) -> str:
@@ -2224,6 +2233,23 @@ async def create_dependency_report(
             is off in production), and say who controls the input. State
             it plainly when no entry point reaches the sink — that is the
             most useful result a reader can get.
+        code_locations: Where application code imports or calls the package —
+            the evidence behind your ``reachability`` claim. List of dicts,
+            same shape as ``create_vulnerability_report``::
+
+                {"file": "src/api/client.ts", "start_line": 14, "end_line": 14,
+                 "snippet": "const x = require('pkg')", "label": "imports it"}
+
+            Cite the repo-relative ``file`` and the exact 1-based
+            ``start_line`` where ``snippet`` actually sits — verify against
+            the real file, never guess. A location may also propose
+            the fix itself: ``fix_before`` (verbatim current code, e.g. the
+            manifest pin line) + ``fix_after`` (same lines with the fixed
+            version) — that combination requires ``fix_verification``.
+        fix_verification: Required whenever any ``code_locations`` entry
+            carries ``fix_after``. Same bar as a normal finding: security
+            closure, bypass review, preserved behavior, and how each was
+            checked.
         contextual_cvss_breakdown: **Required.** Full CVSS v3.1 rating of this
             CVE **in this codebase** — the same 8-metric object as
             ``create_vulnerability_report``'s ``cvss_breakdown``:
@@ -2284,6 +2310,8 @@ async def create_dependency_report(
         manifest_path=manifest_path,
         reachability=reachability,
         reachability_evidence=reachability_evidence,
+        code_locations=code_locations,
+        fix_verification=fix_verification,
         contextual_cvss_breakdown=contextual_cvss_breakdown,
         contextual_cvss_reasoning=contextual_cvss_reasoning,
         agent_id=agent_id,
