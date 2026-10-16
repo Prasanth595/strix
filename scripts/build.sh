@@ -182,7 +182,11 @@ echo -e "${GREEN}Created:${NC} $RELEASE_DIR/$ARCHIVE_NAME"
 ###############################################
 
 echo -e "\n${BLUE}Generating SHA-256 checksum...${NC}"
-sha256sum "$RELEASE_DIR/$BINARY_NAME" > "$RELEASE_DIR/$BINARY_NAME.sha256"
+if command -v sha256sum &>/dev/null; then
+    sha256sum "$RELEASE_DIR/$BINARY_NAME" > "$RELEASE_DIR/$BINARY_NAME.sha256"
+else
+    shasum -a 256 "$RELEASE_DIR/$BINARY_NAME" > "$RELEASE_DIR/$BINARY_NAME.sha256"
+fi
 echo -e "${GREEN}Checksum:${NC} $RELEASE_DIR/$BINARY_NAME.sha256"
 
 ###############################################
