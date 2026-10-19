@@ -13,14 +13,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-import docker
 import requests
-from docker.errors import DockerException, ImageNotFound
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
+from strix.telemetry import report_error
 from strix.utils.api_spec import detect_spec_format
 
 
@@ -132,6 +131,27 @@ def format_vulnerability_report(report: dict[str, Any]) -> Text:  # noqa: PLR091
         if cvss_parts:
             text.append("CVSS Vector: ", style=field_style)
             text.append("/".join(cvss_parts), style="dim")
+
+    dependency_metadata = report.get("dependency_metadata") or {}
+    if dependency_metadata:
+        contextual_vector = dependency_metadata.get("contextual_cvss_vector")
+        if contextual_vector:
+            text.append("\n\n")
+            text.append("Contextual CVSS Vector: ", style=field_style)
+            text.append(contextual_vector, style="dim")
+
+        advisory_cvss = dependency_metadata.get("advisory_cvss")
+        if advisory_cvss is not None and advisory_cvss != report.get("cvss"):
+            text.append("\n\n")
+            text.append("Advisory CVSS: ", style=field_style)
+            text.append(f"{float(advisory_cvss):.1f}", style="dim")
+
+        contextual_reasoning = dependency_metadata.get("contextual_cvss_reasoning")
+        if contextual_reasoning:
+            text.append("\n\n")
+            text.append("Contextual CVSS Reasoning", style=field_style)
+            text.append("\n")
+            text.append(contextual_reasoning)
 
     description = report.get("description")
     if description:
@@ -1303,6 +1323,7 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                     "source_path": details["target_path"],
                     "workspace_subdir": workspace_subdir,
                     "protect_metadata": True,
+                    "read_only": bool(details.get("read_only")),
                 }
             )
 
@@ -1578,16 +1599,21 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 
 
 def check_docker_connection() -> Any:
+    from strix.runtime.docker_connection import DockerConnectionError, connect_docker
+
     try:
-        return docker.from_env()
-    except DockerException:
+        return connect_docker()
+    except DockerConnectionError as exc:
+        report_error("docker_unavailable", exc.cause)
         console = Console()
         error_text = Text()
         error_text.append("DOCKER NOT AVAILABLE", style="bold red")
         error_text.append("\n\n", style="white")
-        error_text.append("Cannot connect to Docker daemon.\n", style="white")
+        error_text.append(f"Cannot connect to Docker at {exc.endpoint.label}.\n", style="white")
+        error_text.append(f"{exc.detail}\n\n", style="dim red")
         error_text.append(
-            "Please ensure Docker Desktop is installed and running, and try running strix again.\n",
+            "Make sure Docker is running. If `docker info` works in this shell, strix uses "
+            "the same daemon. Otherwise set DOCKER_HOST.\n",
             style="white",
         )
 
@@ -1599,10 +1625,12 @@ def check_docker_connection() -> Any:
             padding=(1, 2),
         )
         console.print("\n", panel, "\n")
-        raise RuntimeError("Docker not available") from None
+        sys.exit(1)
 
 
 def image_exists(client: Any, image_name: str) -> bool:
+    from docker.errors import ImageNotFound
+
     try:
         client.images.get(image_name)
     except ImageNotFound:

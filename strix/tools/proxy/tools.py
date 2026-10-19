@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import json
 import logging
 import re
@@ -12,7 +13,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from agents import RunContextWrapper, function_tool
+from caido_sdk_client import BaseError
 
+from strix.runtime.caido_handle import CaidoBootstrapHandle
+from strix.tools.nullish import clean_optional
 from strix.tools.proxy import caido_api
 
 
@@ -47,15 +51,47 @@ ScopeAction = Literal["get", "list", "create", "update", "delete"]
 _CAIDO_CALL_LOCK = asyncio.Lock()
 
 
-def _ctx_client(ctx: RunContextWrapper) -> Client | None:
-    inner = ctx.context if isinstance(ctx.context, dict) else {}
-    return inner.get("caido_client")
+async def _ctx_client(ctx: RunContextWrapper) -> Client | None:
+    inner: dict[str, Any] = ctx.context if isinstance(ctx.context, dict) else {}
+    client: Client | CaidoBootstrapHandle | None = inner.get("caido_client")
+    if isinstance(client, CaidoBootstrapHandle):
+        try:
+            return await client.get()
+        except Exception:  # noqa: BLE001
+            logger.warning("Caido bootstrap failed; proxy tools unavailable", exc_info=True)
+            return None
+    return client
 
 
 async def _call[T](client: Client, fn: Callable[[Client], Awaitable[T]]) -> T:
     """Run ``fn`` against the shared client, serialized under ``_CAIDO_CALL_LOCK``."""
     async with _CAIDO_CALL_LOCK:
         return await fn(client)
+
+
+async def existing_request_ids(
+    ctx: RunContextWrapper,
+    request_ids: list[str],
+) -> set[str]:
+    """Return request IDs that exist in the current Caido project."""
+    if not request_ids:
+        return set()
+
+    client = await _ctx_client(ctx)
+    if client is None:
+        raise RuntimeError("Caido client is not available")
+
+    # Request IDs are not an HTTPQL field. Resolve each ID through the same
+    # project-bound lookup as view_request rather than constructing a filter.
+    existing: set[str] = set()
+    for request_id in request_ids:
+        result = await _call(
+            client,
+            functools.partial(caido_api.get_request_with_client, request_id=request_id),
+        )
+        if result is not None:
+            existing.add(str(result.request.id))
+    return existing
 
 
 def _to_tool_json(value: Any) -> Any:
@@ -89,7 +125,11 @@ def _no_client() -> str:
 
 
 def _err(name: str, exc: Exception) -> str:
-    logger.exception("%s failed", name)
+    # Caido-side failures (timeouts, bad filters, ...) are returned to the model, not our bugs.
+    if isinstance(exc, BaseError):
+        logger.warning("%s failed", name, exc_info=True)
+    else:
+        logger.exception("%s failed", name)
     return json.dumps(
         {"success": False, "error": f"{name} failed: {exc}"},
         ensure_ascii=False,
@@ -155,9 +195,13 @@ async def list_requests(
         sort_order: ``asc`` or ``desc``.
         scope_id: Restrict to a Caido scope (managed via ``scope_rules``).
     """
-    client = _ctx_client(ctx)
+    client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
+
+    httpql_filter = clean_optional(httpql_filter)
+    after = clean_optional(after)
+    scope_id = clean_optional(scope_id)
 
     try:
         connection = await _call(
@@ -261,7 +305,7 @@ async def view_request(
         page: 1-indexed page number (only when no ``search_pattern``).
         page_size: Lines per page.
     """
-    client = _ctx_client(ctx)
+    client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
 
@@ -379,7 +423,7 @@ async def repeat_request(
             - ``body`` — replace the body string entirely.
             - ``cookies`` — dict of cookies to add/update.
     """
-    client = _ctx_client(ctx)
+    client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
     mods = modifications or {}
@@ -461,9 +505,11 @@ async def list_sitemap(
             (recursive subtree). Only meaningful with ``parent_id``.
         page: 1-indexed page (30 entries per page).
     """
-    client = _ctx_client(ctx)
+    client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
+    scope_id = clean_optional(scope_id)
+    parent_id = clean_optional(parent_id)
     try:
         payload = await _call(
             client,
@@ -495,7 +541,7 @@ async def view_sitemap_entry(
     Args:
         entry_id: ID from ``list_sitemap`` (or any nested entry).
     """
-    client = _ctx_client(ctx)
+    client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
     try:
@@ -554,7 +600,7 @@ async def scope_rules(
         scope_id: Required for ``get`` / ``update`` / ``delete``.
         scope_name: Required for ``create`` / ``update``.
     """
-    client = _ctx_client(ctx)
+    client = await _ctx_client(ctx)
     if client is None:
         return _no_client()
 
