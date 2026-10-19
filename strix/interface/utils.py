@@ -1403,6 +1403,29 @@ def _is_within(path: Path, ancestor: Path) -> bool:
     return path_parts[: len(ancestor_parts)] == ancestor_parts
 
 
+def _check_symlink_target(
+    symlink: Path, trees: list[Path], exact: set[str], home: Path
+) -> bool:
+    """Return True if *symlink* points into a forbidden tree or home directory."""
+    try:
+        target = symlink.resolve()
+    except OSError:
+        return False
+    if str(target).casefold() in exact:
+        return True
+    if any(_is_within(target, tree) for tree in trees):
+        return True
+    if target == home.resolve():
+        return True
+    # Also reject symlinks whose resolved target contains a forbidden dir name
+    # (e.g. a symlink named ``.aws`` pointing at a real ``.aws`` directory).
+    if any(
+        part.casefold() in _FORBIDDEN_MOUNT_DIR_NAMES for part in target.parts
+    ):
+        return True
+    return False
+
+
 def check_mountable_dir(path: Path) -> None:
     resolved = path.resolve()
     if not resolved.is_dir():
@@ -1429,6 +1452,21 @@ def check_mountable_dir(path: Path) -> None:
             "or home directory, not a codebase. Point the target at the "
             "project directory you want tested."
         )
+
+    # Reject directories containing symlinks that escape into forbidden trees.
+    # The top-level check above guards the mount point itself; this guards
+    # against a project that carries a symlink like ``etc -> /etc``.
+    for root, dirs, files in os.walk(resolved, followlinks=False):
+        root_path = Path(root)
+        for name in files + dirs:
+            candidate = root_path / name
+            if candidate.is_symlink():
+                if _check_symlink_target(candidate, trees, exact, Path.home()):
+                    raise ValueError(
+                        f"Refusing to mount '{resolved}' into the sandbox: "
+                        f"it contains a symlink '{candidate}' that points into a "
+                        "forbidden path. Remove the symlink and try again."
+                    )
 
     credential = next(
         (part for part in resolved.parts if part.casefold() in _FORBIDDEN_MOUNT_DIR_NAMES), None
