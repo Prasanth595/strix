@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, call, patch
@@ -23,6 +24,7 @@ from strix.report.state import (
     ReportState,
     litellm_cost_callback,
     openrouter_stream_cost,
+    record_llm_request,
     set_global_report_state,
     streamed_openrouter_costs,
 )
@@ -455,3 +457,54 @@ def test_openrouter_records_upstream_of_pre_stream_error() -> None:
         request_log._http_reply.reset(token)
     assert reply.upstream_provider == "InferenceNet"
     assert reply.upstream_error_type is None
+
+
+def test_request_timings_land_in_run_record() -> None:
+    started = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    event = request_log.LlmRequestEvent(
+        call_id="call-1",
+        route="litellm",
+        provider="openrouter",
+        model="openrouter/deepseek/deepseek-v4.1-flash",
+        api_host="openrouter.ai",
+        streaming=True,
+        outcome="success",
+        status_code=200,
+        provider_request_id=None,
+        response_id="gen-1",
+        error_type=None,
+        error_message=None,
+        started_at=started,
+        finished_at=started + timedelta(milliseconds=4200),
+        duration_ms=4200,
+        input_tokens=90_000,
+        output_tokens=600,
+        cached_input_tokens=85_000,
+        agent_id="agent-1",
+        time_to_first_token_ms=900,
+        details={"upstream_provider": "Together"},
+    )
+    state = ReportState.__new__(ReportState)
+    state.run_record = {}
+    try:
+        set_global_report_state(state)
+        record_llm_request(event)
+    finally:
+        set_global_report_state(None)
+
+    assert state.run_record["llm_requests"] == [
+        {
+            "started_at": "2026-10-19T12:00:00+00:00",
+            "agent_id": "agent-1",
+            "model": "openrouter/deepseek/deepseek-v4.1-flash",
+            "provider": "Together",
+            "outcome": "success",
+            "status": 200,
+            "duration_ms": 4200,
+            "ttft_ms": 900,
+            "input_tokens": 90_000,
+            "cached_tokens": 85_000,
+            "output_tokens": 600,
+            "retry_attempt": 0,
+        }
+    ]
