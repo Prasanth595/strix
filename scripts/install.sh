@@ -175,11 +175,23 @@ download_and_install() {
 }
 
 check_docker() {
+    # Docker is only needed for the docker backend. The default host backend runs
+    # agent commands directly on this machine, so skipping this check when
+    # STRIX_RUNTIME_BACKEND is (or defaults to) something else avoids telling
+    # users to install a daemon they do not use.
+    local backend="${STRIX_RUNTIME_BACKEND:-host}"
+    if [ "$backend" != "docker" ]; then
+        echo ""
+        echo -e "${MUTED}Runtime backend: ${NC}${backend} (no Docker needed)"
+        return 0
+    fi
+
     echo ""
     if ! command -v docker >/dev/null 2>&1; then
         echo -e "${YELLOW}⚠ Docker not found${NC}"
-        echo -e "${MUTED}Strix requires Docker to run the security sandbox.${NC}"
-        echo -e "${MUTED}Please install Docker: ${NC}https://docs.docker.com/get-docker/"
+        echo -e "${MUTED}The docker backend requires Docker to run the security sandbox.${NC}"
+        echo -e "${MUTED}Either install Docker: ${NC}https://docs.docker.com/get-docker/"
+        echo -e "${MUTED}or use the host backend: ${NC}export STRIX_RUNTIME_BACKEND=host"
         echo ""
         return 1
     fi
@@ -324,12 +336,12 @@ check_docker
 
 echo ""
 echo -e "${CYAN}"
-echo "   ███████╗████████╗██████╗ ██╗██╗  ██╗"
-echo "   ██╔════╝╚══██╔══╝██╔══██╗██║╚██╗██╔╝"
-echo "   ███████╗   ██║   ██████╔╝██║ ╚███╔╝ "
-echo "   ╚════██║   ██║   ██╔══██╗██║ ██╔██╗ "
-echo "   ███████║   ██║   ██║  ██║██║██╔╝ ██╗"
-echo "   ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝"
+echo "  ██████╗ ██╗  ██╗   ███╗   ███╗██╗   ██╗   ███████╗████████╗██████╗ ██╗██╗  ██╗"
+echo " ██╔═══██╗██║  ██║   ████╗ ████║╚██╗ ██╔╝   ██╔════╝╚══██╔══╝██╔══██╗██║╚██╗██╔╝"
+echo " ██║   ██║███████║   ██╔████╔██║ ╚████╔╝    ███████╗   ██║   ██████╔╝██║ ╚███╔╝"
+echo " ██║   ██║██╔══██║   ██║╚██╔╝██║  ╚██╔╝     ╚════██║   ██║   ██╔══██╗██║ ██╔██╗"
+echo " ╚██████╔╝██║  ██║   ██║ ╚═╝ ██║   ██║      ███████║   ██║   ██║  ██║██║██╔╝ ██╗"
+echo "  ╚═════╝ ╚═╝  ╚═╝   ╚═╝     ╚═╝   ╚═╝      ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝"
 echo -e "${NC}"
 echo -e "${MUTED}  AI Penetration Testing Agent${NC}"
 echo ""

@@ -47,13 +47,11 @@ from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
+from strix.runtime.session_manager import session_workspace_root
 from strix.telemetry import set_scan_phase
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 from strix.tools.finish.tool import finish_scan
-from strix.tools.output_store import (
-    WORKSPACE_SPILL_DIR,
-    configure_spill_writer,
-)
+from strix.tools.output_store import configure_spill_writer
 
 
 if TYPE_CHECKING:
@@ -370,10 +368,16 @@ async def run_strix_scan(
     set_scan_phase("agent_setup")
 
     sandbox_session = bundle["session"]
+    workspace_root = session_workspace_root(sandbox_session)
+
+    # The spill path is bound here rather than read from the module-level
+    # WORKSPACE_SPILL_DIR, which a host runtime's non-/workspace root would make
+    # wrong. It is also the path advertised to the agent in the notice text.
+    spill_dir = f"{workspace_root.rstrip('/')}/.tool-output"
 
     async def _spill_to_workspace(output_id: str, text: str) -> str | None:
         """Write an oversized tool result into the sandbox; return its path or None."""
-        path = f"{WORKSPACE_SPILL_DIR}/{output_id}.txt"
+        path = f"{spill_dir}/{output_id}.txt"
         try:
             await sandbox_session.write(Path(path), io.BytesIO(text.encode("utf-8")))
         except Exception:
@@ -381,7 +385,7 @@ async def run_strix_scan(
             return None
         return path
 
-    configure_spill_writer(_spill_to_workspace)
+    configure_spill_writer(_spill_to_workspace, workspace_root=workspace_root)
 
     sessions_to_close: list[SQLiteSession] = []
     mcp_registry: McpRegistry | None = None

@@ -8,6 +8,7 @@ import inspect
 import io
 import logging
 import os
+import socket
 import sys
 import tarfile
 import time
@@ -15,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agents.sandbox.entries import BaseEntry, LocalDir
-from agents.sandbox.manifest import Environment, Manifest
+from agents.sandbox.manifest import EnvEntry, Environment, EnvValue, Manifest
 
 from strix.config import load_settings
 from strix.runtime.backends import backend_supports_bind_mounts, get_backend
@@ -47,11 +48,64 @@ _WORKSPACE_ROOT = "/workspace"
 _PROTECTED_METADATA_NAMES = (".git", ".agents", ".codex")
 
 # Extra files travel as one tar archive: a single upload plus one extraction
-# inside the sandbox, instead of several round trips per file.
+# inside the sandbox, instead of several round trips per file. The archive's
+# absolute path is derived per-session from the workspace root (see
+# ``session_workspace_root``), since that root is backend-dependent.
 _EXTRA_FILE_ARCHIVE_REL = ".strix-extra-files.tar"
-_EXTRA_FILE_ARCHIVE = f"{_WORKSPACE_ROOT}/{_EXTRA_FILE_ARCHIVE_REL}"
 _EXTRA_FILE_EXTRACT_TIMEOUT_S = 120
 _EXTRA_FILE_MODE = 0o644
+
+
+def _caido_reachable(port: int = _CONTAINER_CAIDO_PORT, timeout: float = 0.5) -> bool:
+    """Whether an HTTP proxy is actually listening on ``port``.
+
+    Checked at session-creation time rather than assumed. Under Docker the
+    sandbox image starts Caido on boot, but the host runtime has no such
+    guarantee, and exporting proxy vars for a proxy that is not there turns
+    every outbound request into a connection error.
+    """
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _sandbox_environment(container_caido_url: str) -> dict[str, str | EnvValue | EnvEntry]:
+    """The environment the sandbox session runs with.
+
+    Caido runs as an in-container sidecar; HTTP(S) traffic from any process
+    started via ``session.exec`` (the SDK's Shell tool, etc.) picks up these
+    env vars automatically. ``NO_PROXY`` keeps the agent-browser CDP daemon's
+    localhost traffic from looping back through Caido.
+
+    The proxy vars are only safe when something is actually listening. The
+    sandbox image starts Caido on boot, but a host runtime does not — and a
+    dead proxy is worse than no proxy: every outbound HTTP call from the agent
+    (curl, pip, npm, nmap scripts) fails to connect instead of just skipping
+    interception. So the port is probed and the fallback is direct egress.
+    """
+    session_env: dict[str, str | EnvValue | EnvEntry] = {
+        "PYTHONUNBUFFERED": "1",
+        "HOST_GATEWAY": "host.docker.internal",
+        **_host_identity_env(),
+    }
+    if _caido_reachable():
+        session_env.update(
+            {
+                "http_proxy": container_caido_url,
+                "https_proxy": container_caido_url,
+                "ALL_PROXY": container_caido_url,
+                "NO_PROXY": "localhost,127.0.0.1",
+            }
+        )
+    else:
+        logger.warning(
+            "No HTTP proxy on %s: leaving proxy vars unset so the agent has direct "
+            "egress. HTTP(S) interception will not be available for this scan.",
+            container_caido_url,
+        )
+    return session_env
 
 
 def _host_identity_env() -> dict[str, str]:
@@ -204,20 +258,43 @@ def _validated_extra_file(
     return rel, content
 
 
+def session_workspace_root(session: BaseSandboxSession) -> str:
+    """Return the session's real workspace root as a string.
+
+    Under Docker this is ``/workspace``, the path baked into the image. A host
+    runtime may be rooted elsewhere (a non-root user usually cannot create
+    ``/workspace``), and the SDK's path policy only accepts paths under the real
+    root — so the literal ``/workspace`` prefix is not universally valid. Reading
+    it off the session keeps both backends on one code path instead of assuming
+    the container layout.
+
+    The trailing separator the host backend uses to pin ``/workspace`` exactly
+    (see ``host_client._manifest_root_value``) is stripped here, so callers can
+    join paths onto the result without producing a double slash.
+    """
+    root = getattr(getattr(session, "state", None), "manifest", None)
+    resolved = getattr(root, "root", None)
+    if not resolved:
+        return _WORKSPACE_ROOT
+    return str(resolved).rstrip("/") or "/"
+
+
 async def stage_extra_files(session: BaseSandboxSession, archive: bytes) -> None:
-    """Upload ``archive`` and unpack it under ``/workspace`` as the sandbox user.
+    """Upload ``archive`` and unpack it under the workspace as the sandbox user.
 
     ``--no-same-owner`` keeps ownership with the extracting user even where
     the session runs as root, so the agent user can always write the files.
     """
-    await session.write(Path(_EXTRA_FILE_ARCHIVE), io.BytesIO(archive))
+    workspace_root = session_workspace_root(session)
+    archive_path = f"{workspace_root}/{_EXTRA_FILE_ARCHIVE_REL}"
+    await session.write(Path(archive_path), io.BytesIO(archive))
     result = await session.exec(
         "sh",
         "-c",
         'tar --no-same-owner -xf "$1" -C "$2" && rm -f -- "$1"',
         "sh",
-        _EXTRA_FILE_ARCHIVE,
-        _WORKSPACE_ROOT,
+        archive_path,
+        workspace_root,
         timeout=_EXTRA_FILE_EXTRACT_TIMEOUT_S,
     )
     if not result.ok():
@@ -309,25 +386,10 @@ async def create_or_reuse(
         bind_mounts = []
         entries = build_manifest_entries(local_sources)
 
-    # Caido runs as an in-container sidecar; HTTP(S) traffic from any
-    # process started via ``session.exec`` (the SDK's Shell tool, etc.)
-    # picks up these env vars automatically. ``NO_PROXY`` keeps the
-    # agent-browser CDP daemon's localhost traffic from looping back
-    # through Caido.
     container_caido_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_PORT}"
     manifest = Manifest(
         entries=entries,
-        environment=Environment(
-            value={
-                "PYTHONUNBUFFERED": "1",
-                "HOST_GATEWAY": "host.docker.internal",
-                **_host_identity_env(),
-                "http_proxy": container_caido_url,
-                "https_proxy": container_caido_url,
-                "ALL_PROXY": container_caido_url,
-                "NO_PROXY": "localhost,127.0.0.1",
-            },
-        ),
+        environment=Environment(value=_sandbox_environment(container_caido_url)),
     )
 
     logger.info(

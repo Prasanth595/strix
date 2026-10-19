@@ -28,6 +28,7 @@ from strix.interface.cli_args import (
 from strix.interface.environment import (
     check_docker_installed,
     pull_docker_image,
+    uses_docker_backend,
     validate_environment,
 )
 from strix.interface.interactive import (
@@ -173,6 +174,7 @@ async def warm_up_llm() -> None:
                 extra_body=settings.dedupe.extra_body,
                 timeout=llm.preflight_timeout,
                 api_base_setting="DEDUPE_LLM_API_BASE",
+                streaming=not llm.disable_streaming,
             )
             logger.info("LLM warm-up succeeded for dedupe model %s", dedupe_model)
 
@@ -483,8 +485,12 @@ def main() -> None:
     if args.resume_picker:
         _pick_run_to_resume(args)
 
-    check_docker_installed()
-    pull_docker_image()
+    # Docker is only required by the docker backend. The default host backend
+    # runs on this machine, so probing for the docker CLI and pulling the
+    # sandbox image would only add latency (and fail outright with no daemon).
+    if uses_docker_backend():
+        check_docker_installed()
+        pull_docker_image()
     validate_environment()
 
     # Everything below imports the scan engine; do not race the warm-up thread.

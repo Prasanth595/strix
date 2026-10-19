@@ -119,6 +119,7 @@ async def preflight_model_connection(
         extra_body=resolved_settings.llm.extra_body,
         timeout=resolved_settings.llm.preflight_timeout,
         api_base_setting="LLM_API_BASE",
+        streaming=not resolved_settings.llm.disable_streaming,
     )
 
 
@@ -130,11 +131,17 @@ async def preflight_request(
     extra_body: dict[str, Any] | None,
     timeout: int,
     api_base_setting: str,
+    streaming: bool = True,
 ) -> None:
     """Send one tiny request to ``model`` and fail if it does not answer in ``timeout`` seconds.
 
     ``api_base_setting`` names the environment variable that points at this
     model's endpoint, so the timeout message sends the user to the right one.
+
+    The request uses the same transport the scan will use. That matters: a
+    local OpenAI-compatible gateway that always answers with SSE breaks the
+    non-streaming path, and a preflight on the other transport would reject a
+    setup that would have worked.
     """
     from agents.models.interface import ModelTracing
 
@@ -149,9 +156,10 @@ async def preflight_request(
         extra_body=extra_body,
         has_tools=False,
     )
-    try:
-        await asyncio.wait_for(
-            model.get_response(
+
+    async def _one_request() -> None:
+        if streaming:
+            async for _ in model.stream_response(
                 system_instructions="You are a helpful assistant.",
                 input="Reply with just 'OK'.",
                 model_settings=request_settings,
@@ -162,9 +170,24 @@ async def preflight_request(
                 previous_response_id=None,
                 conversation_id=None,
                 prompt=None,
-            ),
-            timeout=timeout,
-        )
+            ):
+                break
+        else:
+            await model.get_response(
+                system_instructions="You are a helpful assistant.",
+                input="Reply with just 'OK'.",
+                model_settings=request_settings,
+                tools=[],
+                output_schema=None,
+                handoffs=[],
+                tracing=ModelTracing.DISABLED,
+                previous_response_id=None,
+                conversation_id=None,
+                prompt=None,
+            )
+
+    try:
+        await asyncio.wait_for(_one_request(), timeout=timeout)
     except TimeoutError:
         raise TimeoutError(
             f"{model_name} did not answer within {timeout}s (LLM_PREFLIGHT_TIMEOUT). "

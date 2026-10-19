@@ -154,7 +154,12 @@ class RuntimeSettings(BaseSettings):
         default="ghcr.io/usestrix/strix-sandbox:1.3.0",
         alias="STRIX_IMAGE",
     )
-    backend: str = Field(default="docker", alias="STRIX_RUNTIME_BACKEND")
+    # Host-native is the default: no Docker daemon required, and agent commands
+    # run as this process (root, when Strix is launched as root). Nothing is
+    # isolated in that mode — see docs/advanced/configuration.mdx ("Host
+    # Runtime") before scanning untrusted targets. Set STRIX_RUNTIME_BACKEND=docker
+    # to get container isolation back.
+    backend: str = Field(default="host", alias="STRIX_RUNTIME_BACKEND")
     # Max screenshot/image tool outputs kept live per agent context (0 = none).
     max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
 

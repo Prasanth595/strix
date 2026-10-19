@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 
 if TYPE_CHECKING:
@@ -27,21 +27,47 @@ _WORKSPACE_SPILL_NOTICE = (
 
 WORKSPACE_SPILL_DIR = "/workspace/.tool-output"
 
-# Longest possible workspace path, used only to reserve notice bytes.
-_SAMPLE_WORKSPACE_PATH = f"{WORKSPACE_SPILL_DIR}/{'0' * 32}.txt"
-
 if TYPE_CHECKING:
     SpillWriter = Callable[[str, str], Awaitable[str | None]]
 
-_spill: dict[str, SpillWriter] = {}
+# Single mutable store so ``configure_spill_writer`` rebinds state without module
+# globals — callers hold the spill directory this returns, and a module-level
+# rebind would not reach them anyway.
+_spill: dict[str, Any] = {
+    "writer": None,
+    "dir": WORKSPACE_SPILL_DIR,
+    # Longest possible workspace path, used only to reserve notice bytes.
+    "sample_path": f"{WORKSPACE_SPILL_DIR}/{'0' * 32}.txt",
+}
 
 
-def configure_spill_writer(writer: SpillWriter | None) -> None:
-    """Install (or clear) the sandbox-workspace spill writer."""
+def _sample_workspace_path() -> str:
+    """The reserve-length path used when sizing a truncation notice."""
+    return str(_spill["sample_path"])
+
+
+def configure_spill_writer(
+    writer: SpillWriter | None,
+    *,
+    workspace_root: str | None = None,
+) -> str:
+    """Install (or clear) the sandbox-workspace spill writer.
+
+    Returns the spill directory to write into. ``workspace_root`` is the
+    session's real workspace root: the spilled path is shown to the agent in the
+    truncation notice and handed back to ``session.write``, so it must be a path
+    that both resolve against the workspace. Under Docker that is
+    ``/workspace``; a host runtime may be rooted elsewhere.
+    """
+    if workspace_root:
+        spill_dir = f"{workspace_root.rstrip('/')}/.tool-output"
+        _spill["dir"] = spill_dir
+        _spill["sample_path"] = f"{spill_dir}/{'0' * 32}.txt"
     if writer is None:
         _spill.pop("writer", None)
     else:
         _spill["writer"] = writer
+    return str(_spill["dir"])
 
 
 def _byte_len(text: str) -> int:
@@ -97,7 +123,7 @@ def _head_tail(
                 template.format(
                     lines=len(lines),
                     bytes=total_bytes,
-                    path=_SAMPLE_WORKSPACE_PATH,
+                    path=_sample_workspace_path(),
                 )
             )
             for template in notice_templates

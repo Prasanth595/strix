@@ -1,8 +1,9 @@
-"""Sandbox backend registry — selected via STRIX_RUNTIME_BACKEND (default: docker)."""
+"""Sandbox backend registry — selected via STRIX_RUNTIME_BACKEND (default: host)."""
 
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -51,8 +52,48 @@ async def _docker_backend(
     return client, session
 
 
+async def _host_backend(
+    *,
+    image: str,
+    manifest: Manifest,
+    exposed_ports: tuple[int, ...],
+    bind_mounts: list[dict[str, Any]] | None = None,
+) -> tuple[Any, Any]:
+    """Bring up a session backed by the host itself — no container involved.
+
+    Commands run as the Strix process (root, when Strix is launched as root),
+    so the agent has full host privileges: real capabilities for raw-socket
+    tools, the host network stack, and the host filesystem.
+
+    ``image`` is accepted to keep the shared backend signature but is unused;
+    nothing is pulled or run. ``bind_mounts`` is ignored for the same reason
+    ``create_or_reuse`` skips manifest entries for non-bind-mount backends: the
+    host directory is already the workspace.
+
+    Imports are lazy so a Docker-only deployment never loads this module.
+    """
+    from strix.runtime.host_client import host_backend
+
+    # This is the default backend, so this line runs on every scan. It says the
+    # one thing an operator needs to know before an agent that has read a
+    # malicious target starts running commands as them.
+    logger.warning(
+        "Host runtime backend: agent commands run directly on this host as the Strix "
+        "process (uid %s) with no isolation — a prompt-injected target could act with "
+        "those privileges. Set STRIX_RUNTIME_BACKEND=docker for container isolation.",
+        os.getuid() if hasattr(os, "getuid") else "n/a",
+    )
+    return await host_backend(
+        image=image,
+        manifest=manifest,
+        exposed_ports=exposed_ports,
+        bind_mounts=bind_mounts,
+    )
+
+
 _BACKENDS: dict[str, SandboxBackend] = {
     "docker": _docker_backend,
+    "host": _host_backend,
 }
 
 _BIND_MOUNT_BACKENDS: set[str] = {"docker"}

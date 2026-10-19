@@ -25,14 +25,15 @@ Target-specific workflows built on the same engine:
 
 **Two ways to run, same engine — pick per situation:**
 
-- **Open-source CLI (self-hosted):** free, fully local, BYO LLM key, needs Docker. Best for local dev loops, air-gapped/offline, and full control.
+- **Open-source CLI (self-hosted):** free, fully local, BYO LLM key. Best for local dev loops, air-gapped/offline, and full control.
   ```bash
   curl -sSL https://strix.ai/install | bash        # install
   export STRIX_LLM="openrouter/z-ai/glm-5.3"        # any LiteLLM model id
   export LLM_API_KEY="<key>"
   strix -n -t ./ --scan-mode quick --max-budget 10  # headless scan; always use -n
   ```
-  - Requires Docker running. Scans take minutes (`quick`) to hours (`deep`) — run in the background.
+  - No Docker required by default. The `host` backend (default) runs agent commands directly on this machine as the Strix process — no isolation, so a prompt-injected target acts with the operator's privileges. Set `STRIX_RUNTIME_BACKEND=docker` for container isolation; that path needs a running Docker daemon and the sandbox image.
+  - Scans take minutes (`quick`) to hours (`deep`) — run in the background.
   - Exit codes (headless): `0` clean, `1` fatal error, `2` vulnerabilities found. A `0` only covers what was analyzed — check `run.json` (`status`, `llm_usage.cost` vs the budget) before calling a run clean.
   - Artifacts in `strix_runs/<run-name>/`: `penetration_test_report.md`, `vulnerabilities/*.md`, `vulnerabilities.json`, `findings.sarif` (SARIF 2.1.0), `run.json`.
 
@@ -65,5 +66,5 @@ Target-specific workflows built on the same engine:
 - Lint/format/type-check/security, all in one: `make check-all` (ruff, mypy, bandit).
 - Tests: `uv run pytest`.
 - Run from source: `uv run strix --target <target>`.
-- Layout: `strix/agents` (agent graph + prompts), `strix/tools` (proxy, browser, terminal, scanners), `strix/runtime` (Docker sandbox), `strix/report` (findings, SARIF), `strix/skills` (internal knowledge packs the pentest agents load — different from the consumer skills in `skills/`), `strix/interface` (CLI/TUI), `containers/` (sandbox image).
+- Layout: `strix/agents` (agent graph + prompts), `strix/tools` (proxy, browser, terminal, scanners), `strix/runtime` (sandbox backends: host-native default, Docker optional), `strix/report` (findings, SARIF), `strix/skills` (internal knowledge packs the pentest agents load — different from the consumer skills in `skills/`), `strix/interface` (CLI/TUI), `containers/` (sandbox image, docker backend only).
 - Pre-commit hooks: `make pre-commit` (or `uv run pre-commit install`).

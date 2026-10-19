@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 _DEFAULT_PATH: Path = Path.home() / ".strix" / "cli-config.json"
+# Machine-wide config, read before the per-user file. ``sudo`` changes HOME to
+# root's, so a ``sudo strix`` invocation would otherwise never see the invoking
+# user's settings; this lets an admin put shared defaults where sudo can reach.
+_SYSTEM_CONFIG_PATH: Path = Path("/etc/strix/cli-config.json")
 _override: Path | None = None
 _cached: Settings | None = None
 
@@ -34,20 +38,43 @@ _cached: Settings | None = None
 _LINKED_LLM_FIELDS = ("model", "api_key", "api_base")
 
 
+def _config_search_paths() -> list[Path]:
+    """Config files to consult, lowest precedence first.
+
+    ``/etc/strix/cli-config.json`` comes first so it acts as the machine-wide
+    default: ``sudo`` resets ``HOME`` to root's, which would otherwise leave a
+    ``sudo strix`` run reading ``/root/.strix`` and missing the invoking user's
+    config entirely. The per-user file still wins, so a user can override the
+    machine default.
+    """
+    return [_SYSTEM_CONFIG_PATH, _DEFAULT_PATH]
+
+
 def load_settings() -> Settings:
     """Resolve settings from env + JSON file + defaults. Memoized.
 
-    Precedence: env vars win, then the JSON file, then field defaults.
+    Precedence: env vars win, then the per-user JSON file, then the
+    machine-wide one, then field defaults.
     """
     global _cached  # noqa: PLW0603
     if _cached is None:
-        source_path = _override or _DEFAULT_PATH
-        init_kwargs: dict[str, Any] = _read_json_overrides(source_path)
+        candidates = [_override] if _override is not None else _config_search_paths()
+        init_kwargs: dict[str, Any] = {}
+        used: Path | None = None
+        for path in candidates:
+            found = _read_json_overrides(path)
+            if found:
+                # Later candidates win, so keep merging into one dict.
+                for section, values in found.items():
+                    init_kwargs.setdefault(section, {}).update(values)
+                used = path
+        if _override is not None:
+            used = _override if _override.exists() else None
         _cached = Settings(**init_kwargs)
         logger.debug(
             "load_settings: resolved (override=%s, file_used=%s, json_keys=%d)",
             _override is not None,
-            source_path.exists(),
+            used,
             sum(len(v) for v in init_kwargs.values()),
         )
     return _cached

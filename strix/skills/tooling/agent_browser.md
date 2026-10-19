@@ -1,19 +1,40 @@
 ---
 name: agent_browser
-description: agent-browser CLI for headless Chrome via shell. Snapshot-and-ref workflow, click/fill/extract, screenshots, multi-tab, multi-session, network mocking. Pre-installed in the sandbox; invoke via exec_command.
+description: Browser automation for headless Chrome. Prefer the browsermcp MCP tools (navigate/snapshot/click/screenshot) when they are available; the agent-browser CLI below is the shell fallback. Verify the CLI exists before relying on it.
 template: jinja
 ---
 
 
-# agent-browser core
+# Browser automation
 
-Fast browser automation CLI for AI agents. Chrome/Chromium via CDP, no
+Two ways to drive a real browser. Check which one you have before scripting.
+
+## Preferred: the `browsermcp` MCP server
+
+When the `browsermcp` tools are present in your tool list, use those — they are
+the supported path. Typical shape: navigate to a URL, read the page (accessibility
+snapshot or text), then click/fill by element ref, and screenshot when you need
+visual evidence. Re-read the page after anything that changes it; refs go stale.
+
+The MCP server drives one shared browser, so a concurrent agent's navigation can
+invalidate your page and refs. If that happens, re-navigate rather than trusting
+stale refs. Close your page/context when you finish with a target.
+
+## Fallback: the `agent-browser` CLI
+
+Everything below documents the `agent-browser` shell CLI. It is **not
+guaranteed to be installed** — check first (`command -v agent-browser`), and if
+it is missing either use the MCP tools or install it
+(`npm install -g agent-browser`). Do not assume it exists.
+
+Fast browser automation CLI. Chrome/Chromium via CDP, no
 Playwright or Puppeteer dependency. Accessibility-tree snapshots with compact
 `@eN` refs let agents interact with pages in ~200-400 tokens instead of
 parsing raw HTML.
 
-Pre-installed in the sandbox image. Always invoke via the
-``exec_command`` shell tool. The Caido HTTP/HTTPS proxy is already
+Invoke via the
+``exec_command`` shell tool. If the Caido HTTP/HTTPS proxy is running, it is
+already
 wired via ``http_proxy`` / ``https_proxy`` env vars — **do not pass
 ``--proxy``**; agent-browser picks it up automatically and Caido
 captures all page traffic. Localhost (CDP) traffic is excluded via
