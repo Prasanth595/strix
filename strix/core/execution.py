@@ -433,7 +433,11 @@ async def spawn_child_agent(
             "current_child_agents": child_count,
         }
 
-    child_agent = factory(name=name, skills=skills)
+    try:
+        child_agent = factory(name=name, skills=skills)
+    except Exception:
+        await coordinator.discard_child_reservation(child_id)
+        raise
 
     await _start_child_runner(
         parent_ctx=parent_ctx,

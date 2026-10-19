@@ -308,6 +308,18 @@ class AgentCoordinator:
         await self._maybe_snapshot()
         return True, child_count
 
+    async def discard_child_reservation(self, agent_id: str) -> None:
+        """Forget a reserved child whose runner never started, freeing its slot."""
+        async with self._lock:
+            self.statuses.pop(agent_id, None)
+            self.parent_of.pop(agent_id, None)
+            self.names.pop(agent_id, None)
+            self.pending_counts.pop(agent_id, None)
+            self.metadata.pop(agent_id, None)
+            self.runtimes.pop(agent_id, None)
+        logger.info("agent.discard %s", agent_id)
+        await self._maybe_snapshot()
+
     async def attach_runtime(
         self,
         agent_id: str,
