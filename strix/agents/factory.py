@@ -13,11 +13,13 @@ from agents.agent import ToolsToFinalOutputResult
 from agents.sandbox import SandboxAgent
 from agents.sandbox.capabilities import Filesystem, Shell
 from agents.sandbox.errors import InvalidManifestPathError
+from agents.sandbox.session.pty_types import PTY_YIELD_TIME_MS_MAX
 from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
+from strix.config.tool_call_arguments import describe_malformed_arguments
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -29,7 +31,13 @@ from strix.tools.agents_graph.tools import (
 from strix.tools.coverage.tools import list_coverage, record_coverage, update_coverage
 from strix.tools.finish.tool import finish_scan
 from strix.tools.load_skill.tool import load_skill
-from strix.tools.mcp import call_mcp, describe_mcp, list_mcps
+from strix.tools.mcp import (
+    call_mcp,
+    describe_mcp,
+    get_mcp_tool_schema,
+    list_mcps,
+    search_mcp_tools,
+)
 from strix.tools.notes.tools import (
     create_note,
     delete_note,
@@ -50,11 +58,11 @@ from strix.tools.proxy.tools import (
 from strix.tools.reporting.tool import (
     create_dependency_report,
     create_vulnerability_report,
+    delete_vulnerability_report,
     get_report,
     list_reports,
     update_vulnerability_report,
 )
-from strix.tools.respond.tool import respond_to_user
 from strix.tools.thinking.tool import think
 from strix.tools.threat_model.tools import (
     amend_threat_model,
@@ -69,6 +77,7 @@ from strix.tools.todo.tools import (
     mark_todo_pending,
     update_todo,
 )
+from strix.tools.wait_for_user.tool import wait_for_user
 from strix.tools.web_search.tool import web_get_contents, web_search
 
 
@@ -260,6 +269,10 @@ def _with_coerced_arguments(tool: FunctionTool) -> FunctionTool:
     nullish = tool.name.startswith(_QUERY_TOOL_PREFIXES)
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
+        malformed = describe_malformed_arguments(tool.name, raw_input)
+        if malformed is not None:
+            logger.debug("Tool %s got malformed arguments; asking the model to re-issue", tool.name)
+            return malformed
         return await invoke_tool(ctx, _coerce_arguments(raw_input, schema, nullish=nullish))
 
     tool.on_invoke_tool = invoke
@@ -368,11 +381,15 @@ def _configure_filesystem_tools(
             )
 
 
-def _make_filesystem_configurator(*, chat_completions: bool, strict_schemas: bool) -> Any:
+def _make_filesystem_configurator(
+    *, chat_completions: bool, strict_schemas: bool, supports_images: bool = True
+) -> Any:
     def configure(toolset: Any) -> None:
         _configure_filesystem_tools(
             toolset, chat_completions=chat_completions, strict_schemas=strict_schemas
         )
+        if not supports_images:
+            toolset.view_image.is_enabled = False
 
     return configure
 
@@ -425,8 +442,47 @@ def _apply_shell_output_cap(parsed: dict[str, Any]) -> None:
     )
 
 
+_EXEC_YIELD_CAP_S = PTY_YIELD_TIME_MS_MAX // 1000
+
+_EXEC_COMMAND_DESCRIPTION_NOTE = (
+    f"The wait for output is capped at {_EXEC_YIELD_CAP_S} s whatever yield_time_ms says. "
+    "A non-TTY command still running at the yield cannot be read later (write_stdin fails "
+    "on it and its output is lost): run anything longer in the background with its output "
+    "redirected to a file (`cmd > /tmp/out.log 2>&1 &`, then read the log), or start it with "
+    'tty=true and poll with write_stdin(session_id=<id>, chars="").'
+)
+
+_RUNNING_NON_TTY_NOTICE = (
+    "Note: this non-TTY process cannot be polled and its later output is lost. Rerun it in "
+    "the background (`cmd > /tmp/out.log 2>&1 &`, then read the log) or with tty=true."
+)
+
+_PROCESS_RUNNING_RE = re.compile(r"^Process running with session ID \d+$", re.MULTILINE)
+_OUTPUT_HEADER_RE = re.compile(r"^Output:\n", re.MULTILINE)
+
+
+def _annotate_running_non_tty(parsed: dict[str, Any], result: Any) -> Any:
+    if parsed.get("tty") or not isinstance(result, str):
+        return result
+    header = _OUTPUT_HEADER_RE.search(result)
+    head_end = len(result) if header is None else header.start()
+    if _PROCESS_RUNNING_RE.search(result, 0, head_end) is None:
+        return result
+    notice = _RUNNING_NON_TTY_NOTICE
+    requested = parsed.get("yield_time_ms")
+    if isinstance(requested, int | float) and requested > PTY_YIELD_TIME_MS_MAX:
+        notice = (
+            f"Note: yield_time_ms={int(requested)} was capped at {PTY_YIELD_TIME_MS_MAX} "
+            f"({_EXEC_YIELD_CAP_S} s). " + notice.removeprefix("Note: ")
+        )
+    if header is None:
+        return f"{result}\n{notice}"
+    return f"{result[: header.end()]}{notice}\n{result[header.end() :]}"
+
+
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
+    tool.description = f"{tool.description.rstrip()} {_EXEC_COMMAND_DESCRIPTION_NOTE}"
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
         try:
@@ -439,7 +495,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
         try:
-            return await invoke_tool(ctx, raw_input)
+            result = await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
             return _format_validation_error(tool.name, exc)
         except InvalidManifestPathError as exc:
@@ -449,6 +505,9 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                 "(or omitted to use the turn's cwd). "
                 f"Got: {rel!r}."
             )
+        if isinstance(parsed, dict):
+            return _annotate_running_non_tty(parsed, result)
+        return result
 
     tool.on_invoke_tool = invoke
     return tool
@@ -502,7 +561,7 @@ def _make_shell_configurator(*, chat_completions: bool, strict_schemas: bool) ->
 
 
 # Tools that hand control away by parking the agent rather than ending the scan.
-_PARKING_TOOLS: frozenset[str] = frozenset({"respond_to_user", "wait_for_agents"})
+_PARKING_TOOLS: frozenset[str] = frozenset({"wait_for_user", "wait_for_agents"})
 
 
 def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
@@ -510,6 +569,8 @@ def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
         completion_key = "agent_completed"
     elif tool_name == "finish_scan":
         completion_key = "scan_completed"
+    elif tool_name == "finish_pr_review":  # registered by strix-pro
+        completion_key = "review_completed"
     else:
         return False
 
@@ -583,6 +644,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     create_vulnerability_report,
     create_dependency_report,
     update_vulnerability_report,
+    delete_vulnerability_report,
     list_reports,
     get_report,
     list_requests,
@@ -592,6 +654,8 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     view_sitemap_entry,
     scope_rules,
     list_mcps,
+    search_mcp_tools,
+    get_mcp_tool_schema,
     describe_mcp,
     call_mcp,
     view_agent_graph,
@@ -658,6 +722,8 @@ def build_strix_agent(
     system_prompt_context: dict[str, Any] | None = None,
     extra_tools: Sequence[Tool] | None = None,
     instructions_override: str | None = None,
+    supports_images: bool = True,
+    finish_tool: Tool = finish_scan,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -670,6 +736,7 @@ def build_strix_agent(
             registered via ``register_agent_tools``.
         instructions_override: Use this verbatim as the system prompt instead
             of rendering the built-in scan prompt.
+        finish_tool: The tool that ends the run, given to the root agent.
     """
     if instructions_override is not None:
         instructions = instructions_override
@@ -682,14 +749,15 @@ def build_strix_agent(
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
             system_prompt_context=system_prompt_context,
+            supports_images=supports_images,
         )
 
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
     if interactive:
         # Yielding to the user is only meaningful when one is attached.
-        agent_tools.append(respond_to_user)
+        agent_tools.append(wait_for_user)
     if is_root:
-        tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_scan]
+        tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_tool]
     else:
         tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
@@ -721,6 +789,7 @@ def build_strix_agent(
                 configure_tools=_make_filesystem_configurator(
                     chat_completions=chat_completions_tools,
                     strict_schemas=strict_tool_schemas,
+                    supports_images=supports_images,
                 ),
             ),
             Shell(
@@ -742,6 +811,7 @@ def make_child_factory(
     chat_completions_tools: bool = False,
     strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
+    supports_images: bool = True,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
 
@@ -762,6 +832,7 @@ def make_child_factory(
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=system_prompt_context,
+            supports_images=supports_images,
         )
 
     return _factory

@@ -285,6 +285,28 @@ def test_resume_rejects_non_string_baseline_run(
     assert "must be a run name" in capsys.readouterr().err
 
 
+def test_load_resume_state_reports_invalid_baseline_as_resume_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The bare --resume picker loads the chosen run outside parse_arguments, so
+    # a bad persisted baseline must surface as a ResumeError it can print.
+    _write_run_record(
+        tmp_path / RUNS_DIR_NAME,
+        "pentest-resume",
+        {
+            "run_name": "pentest-resume",
+            "targets_info": [{"type": "web_application", "original": TARGET_URL, "details": {}}],
+            "baseline_run": f"../{OUTSIDE_RUN_NAME}",
+        },
+    )
+    monkeypatch.chdir(tmp_path)
+    args = SimpleNamespace(resume="pentest-resume", instruction=None, scan_mode="deep")
+
+    with pytest.raises(cli_args.ResumeError, match="must be a run name, not a path"):
+        cli_args.load_resume_state(args)
+
+
 @pytest.mark.asyncio
 async def test_cli_runtime_hydrates_selected_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, object]] = []
