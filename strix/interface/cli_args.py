@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from strix.config import apply_config_override
 from strix.config.settings import DEFAULT_MAX_TURNS
@@ -447,6 +447,7 @@ def _validate_baseline_run(baseline_run: object) -> None:
         raise ValueError(f"{BASELINE_RUN_ARG} must be a non-empty run name")
     if (
         Path(baseline_run).is_absolute()
+        or PureWindowsPath(baseline_run).drive
         or baseline_run in {".", ".."}
         or any(separator in baseline_run for separator in RUN_NAME_PATH_SEPARATORS)
     ):
@@ -570,12 +571,13 @@ def load_resume_state(args: argparse.Namespace) -> None:
         attach_workspace_mount(args)
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
-    args.baseline_run = state.get("baseline_run")
-    if args.baseline_run is not None:
+    baseline_run = state.get("baseline_run")
+    if baseline_run is not None:
         try:
-            _validate_baseline_run(args.baseline_run)
+            _validate_baseline_run(baseline_run)
         except (TypeError, ValueError) as exc:
             raise ResumeError(f"--resume {args.resume}: {exc}") from exc
+    args.baseline_run = baseline_run
     persisted_scan_mode = state.get("scan_mode")
     if persisted_scan_mode and args.scan_mode == "deep":
         args.scan_mode = persisted_scan_mode
