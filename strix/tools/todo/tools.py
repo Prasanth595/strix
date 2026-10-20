@@ -164,7 +164,12 @@ def _normalize_bulk_updates(raw_updates: Any) -> list[dict[str, Any]]:
             raise ValueError("Updates must be valid JSON") from e
 
     if isinstance(data, dict):
-        data = [data]
+        for key in ("updates", "todos", "tasks", "items", "data"):
+            if key in data and isinstance(data[key], list):
+                data = data[key]
+                break
+        else:
+            data = [data]
     if not isinstance(data, list):
         raise TypeError("Updates must be a list of update objects")
 
@@ -187,7 +192,22 @@ def _normalize_bulk_updates(raw_updates: Any) -> list[dict[str, Any]]:
     return normalized
 
 
-def _normalize_bulk_todos(raw_todos: Any) -> list[dict[str, Any]]:
+def _extract_todo_title_and_desc(item: dict[str, Any]) -> tuple[str, str | None]:
+    for key in ("title", "task", "name", "todo", "summary", "text", "content", "description"):
+        val = item.get(key)
+        if isinstance(val, str) and val.strip():
+            title = val.strip()
+            desc = item.get("description")
+            clean_desc = desc.strip() if isinstance(desc, str) and desc.strip() else None
+            return title, (clean_desc if clean_desc != title else None)
+
+    for val in item.values():
+        if isinstance(val, str) and val.strip():
+            return val.strip(), None
+    return "", None
+
+
+def _parse_todos_payload(raw_todos: Any) -> list[Any]:
     if raw_todos is None:
         return []
     data: Any = raw_todos
@@ -202,10 +222,18 @@ def _normalize_bulk_todos(raw_todos: Any) -> list[dict[str, Any]]:
             return [{"title": entry} for entry in entries]
 
     if isinstance(data, dict):
-        data = [data]
+        for key in ("todos", "tasks", "items", "entries", "data"):
+            if key in data and isinstance(data[key], list):
+                return data[key]
+        return [data]
+
     if not isinstance(data, list):
         raise TypeError("Todos must be provided as a list, dict, or JSON string")
+    return data
 
+
+def _normalize_bulk_todos(raw_todos: Any) -> list[dict[str, Any]]:
+    data = _parse_todos_payload(raw_todos)
     normalized: list[dict[str, Any]] = []
     for item in data:
         if isinstance(item, str):
@@ -215,13 +243,13 @@ def _normalize_bulk_todos(raw_todos: Any) -> list[dict[str, Any]]:
             continue
         if not isinstance(item, dict):
             raise TypeError("Each todo entry must be a string or object with a title")
-        title = item.get("title", "")
-        if not isinstance(title, str) or not title.strip():
+        title, desc = _extract_todo_title_and_desc(item)
+        if not title:
             raise ValueError("Each todo entry must include a non-empty 'title'")
         normalized.append(
             {
-                "title": title.strip(),
-                "description": (item.get("description") or "").strip() or None,
+                "title": title,
+                "description": desc,
                 "priority": item.get("priority"),
             },
         )

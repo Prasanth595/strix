@@ -103,3 +103,16 @@ async def test_non_string_priority_does_not_fail_the_batch() -> None:
     assert result["success"] is True
     assert result["created_count"] == 3
     assert {c["priority"] for c in result["created"]} == {"normal"}
+
+
+@pytest.mark.asyncio
+async def test_flexible_todo_key_and_container_unwrapping() -> None:
+    # LLM wrapping in container dict {"todos": [...]} or using "task"/"description"
+    payload = {"todos": [{"task": "Port scan with nmap"}, {"description": "Fuzz endpoints"}]}
+    result = await _create(payload)  # type: ignore[arg-type]
+    assert result["success"] is True
+    assert result["created_count"] == 2
+    titles = [c["title"] for c in result["created"]]
+    assert "Port scan with nmap" in titles
+    assert "Fuzz endpoints" in titles
+
