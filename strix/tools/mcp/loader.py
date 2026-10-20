@@ -17,7 +17,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from pydantic import ValidationError
 
@@ -118,11 +118,43 @@ def load_user_mcp_configs(path: Path | None = None) -> list[McpConnectionConfig]
         logger.exception("Could not read MCP config at %s; ignoring it", source)
         return []
 
-    if not isinstance(raw, list):
-        logger.warning("MCP config at %s is not a JSON list; ignoring it", source)
+    if isinstance(raw, dict):
+        servers_dict = raw.get("mcpServers") if isinstance(raw.get("mcpServers"), dict) else raw
+        converted: list[dict[str, Any]] = []
+        for name, spec in servers_dict.items():
+            if not isinstance(spec, dict) or spec.get("enabled") is False:
+                continue
+            cmd_entry = spec.get("command")
+            args_entry = spec.get("args", [])
+            extra_args = [str(a) for a in args_entry] if isinstance(args_entry, list) else []
+            if isinstance(cmd_entry, list) and cmd_entry:
+                command = str(cmd_entry[0])
+                args = [str(a) for a in cmd_entry[1:]] + extra_args
+            else:
+                command = str(cmd_entry) if cmd_entry else None
+                args = extra_args
+            env = spec.get("environment") or spec.get("env") or {}
+            is_http = spec.get("type") in ("http", "sse") or bool(spec.get("url"))
+            transport = "http" if is_http else "stdio"
+            url = spec.get("url")
+            converted.append(
+                {
+                    "name": name,
+                    "transport": transport,
+                    "command": command,
+                    "args": args,
+                    "env": env if isinstance(env, dict) else {},
+                    "url": url,
+                    "notes": spec.get("notes"),
+                    "allowed_tools": spec.get("allowed_tools"),
+                }
+            )
+        entries = cast("list[object]", converted)
+    elif isinstance(raw, list):
+        entries = cast("list[object]", raw)
+    else:
+        logger.warning("MCP config at %s is neither a JSON list nor a dict; ignoring it", source)
         return []
-
-    entries = cast("list[object]", raw)
     configs: list[McpConnectionConfig] = []
     for index, entry in enumerate(entries):
         try:
