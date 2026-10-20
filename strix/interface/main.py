@@ -93,7 +93,8 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
     if "not supported when using codex with a chatgpt account" in joined:
         return (
             "This model isn't available on your ChatGPT subscription. "
-            "Set STRIX_LLM to a model your plan includes (e.g. chatgpt/gpt-5.4)."
+            f"Set STRIX_LLM to a model your plan includes "
+            f"(e.g. {codex.SUBSCRIPTION_MODEL_EXAMPLE})."
         )
     if (
         "error code: 401" in joined
