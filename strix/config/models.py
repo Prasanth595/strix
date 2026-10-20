@@ -606,6 +606,8 @@ class StrixProvider(MultiProvider):
                 prefix=prefix,
                 stripped_model_name=stripped_model_name,
             )
+        if prefix == "pecut":
+            return self.openai_provider, original_model_name
         if prefix == "ollama" and stripped_model_name:
             return self._get_fallback_provider("litellm"), f"ollama_chat/{stripped_model_name}"
         return self._get_fallback_provider("litellm"), original_model_name
