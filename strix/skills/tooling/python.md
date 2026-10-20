@@ -92,11 +92,17 @@ For iterative exploit work, put code in a file:
 
 ## Installing extra packages
 
-The sandbox's Python lives in `/app/.venv`, and it is the active virtualenv
-(`python3` / `pip` already resolve to it). The following common libraries are
-**pre-installed** — import them directly, no install step needed:
-`requests`, `httpx`, `beautifulsoup4` (`bs4`), `lxml`, `pyjwt` (`jwt`),
-`cryptography`.
+Python 3 is on `PATH`. A set of common libraries is usually **already
+installed** — `requests`, `httpx`, `beautifulsoup4` (`bs4`), `lxml`,
+`cryptography`. Anything beyond that is not guaranteed: verify before relying on
+it (`python3 -c "import <pkg>"`) and install what you need rather than letting
+the script die on `ModuleNotFoundError`.
+
+If not root, install to the user site so you do not need elevated privileges:
+
+```bash
+python3 -m pip install --user <pkg>
+```
 
 To add a one-off dependency for an exploit script, use `uv` (already in the
 image and much faster than pip):

@@ -268,6 +268,9 @@ ignore = [
 # Backend factories import their backend's deps lazily so deployments
 # that pick a different backend don't need every backend's libs installed.
 "strix/runtime/backends.py" = ["PLC0415"]
+# The Unix-local sandbox client is imported lazily so a Docker-only deployment
+# never loads it, matching how backends.py defers each backend's imports.
+"strix/runtime/host_client.py" = ["PLC0415", "ARG001"]
 "strix/runtime/docker_client.py" = [
     "TC002",  # Manifest, Container imported for annotations
     "TC003",  # uuid imported for annotation

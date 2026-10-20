@@ -171,9 +171,47 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
   Docker daemon address, for example `unix:///var/run/docker.sock` or `tcp://10.0.0.5:2375`. When not set, Strix connects to the same daemon as the `docker` CLI: the current docker context (`docker context use`), then the default socket. Docker Desktop, OrbStack and Colima register their sockets as contexts, so no extra configuration is needed for them.
 </ParamField>
 
-<ParamField path="STRIX_RUNTIME_BACKEND" default="docker" type="string">
-  Runtime backend for the sandbox environment.
+<ParamField path="STRIX_RUNTIME_BACKEND" default="host" type="string">
+  Runtime backend for the sandbox environment. `host` runs each scan directly on
+  this machine. `docker` runs it inside a container instead — see
+  [Host runtime](#host-runtime) below.
 </ParamField>
+
+<ParamField path="STRIX_HOST_WORKSPACE_ROOT" type="string">
+  Workspace directory for the `host` backend. Defaults to `/workspace`, falling
+  back to a directory under the system temp dir when that is not writable.
+</ParamField>
+
+## Host Runtime
+
+`host` is the **default** backend: agent commands execute on this machine as the
+Strix process itself, with no container. No Docker daemon is required. Running
+Strix as root gives the agent root.
+
+```bash
+strix -n -t ./ --scan-mode quick --max-budget 10
+```
+
+What this means in practice:
+
+- **No isolation.** There is no container, chroot, or namespace boundary. The
+  agent can read and write any file the Strix user can.
+- **Prompt injection is not contained.** A malicious target can feed instructions
+  to the agent, and those instructions run with your user's full privileges.
+  This is the single biggest difference from the Docker backend.
+- **The toolchain is the host's.** The sandbox image's preinstalled tools are not
+  present; install anything the scan needs beforehand.
+- **Caido runs on the host.** The proxy listens on `127.0.0.1:48080`, so that
+  port must be free.
+- **Shared state.** Concurrent scans share the workspace directory and
+  `~/.strix`, so avoid overlapping runs.
+
+To get container isolation back:
+
+```bash
+export STRIX_RUNTIME_BACKEND=docker
+strix -n -t ./ --scan-mode quick --max-budget 10
+```
 
 ## Sandbox Configuration
 

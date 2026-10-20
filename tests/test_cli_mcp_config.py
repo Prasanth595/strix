@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from strix.tools.mcp.loader import load_user_mcp_configs
+
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -86,3 +88,35 @@ def test_mcp_server_flags_set_selection_env(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert os.environ["STRIX_MCP_ONLY"] == "a,b"
     assert os.environ["STRIX_MCP_EXCLUDE"] == "c"
+
+
+def test_load_user_mcp_configs_dict_format(tmp_path: Path) -> None:
+    config_file = tmp_path / "dict_mcp.json"
+    config_file.write_text(
+        """
+        {
+          "rea": {
+            "type": "local",
+            "command": ["npx", "-y", "rea-agents@latest", "mcp"],
+            "enabled": true,
+            "environment": {
+              "GHIDRA_INSTALL_DIR": "/tools/ghidra",
+              "JAVA_HOME": "/usr/lib/jvm/java-21"
+            }
+          },
+          "disabled_srv": {
+            "command": "echo",
+            "enabled": false
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    configs = load_user_mcp_configs(config_file)
+    assert len(configs) == 1
+    assert configs[0].name == "rea"
+    assert configs[0].command == "npx"
+    assert configs[0].args == ["-y", "rea-agents@latest", "mcp"]
+    assert configs[0].env["GHIDRA_INSTALL_DIR"] == "/tools/ghidra"
+    assert configs[0].env["JAVA_HOME"] == "/usr/lib/jvm/java-21"

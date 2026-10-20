@@ -163,6 +163,16 @@ def validate_environment() -> None:
     )
 
 
+def uses_docker_backend() -> bool:
+    """Whether this run needs a Docker daemon and the sandbox image.
+
+    Only the docker backend does. The default host backend runs agent commands
+    on this machine, so probing for the docker CLI or pulling the sandbox image
+    would be both wrong (it fails the run on a Docker-less host) and slow.
+    """
+    return load_settings().runtime.backend == "docker"
+
+
 def check_docker_installed() -> None:
     if shutil.which("docker") is None:
         logger.debug("Docker CLI not found in PATH")

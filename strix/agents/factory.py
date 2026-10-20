@@ -29,6 +29,7 @@ from strix.tools.agents_graph.tools import (
     wait_for_agents,
 )
 from strix.tools.coverage.tools import list_coverage, record_coverage, update_coverage
+from strix.tools.file_ops import read_file, write_file
 from strix.tools.finish.tool import finish_scan
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.mcp import (
@@ -47,6 +48,13 @@ from strix.tools.notes.tools import (
 )
 from strix.tools.nullish import is_nullish
 from strix.tools.output_store import bound_and_store, bound_text
+from strix.tools.process_manager import (
+    process_kill,
+    process_list,
+    process_output,
+    process_write_stdin,
+    shell_exec,
+)
 from strix.tools.proxy.tools import (
     list_requests,
     list_sitemap,
@@ -622,6 +630,13 @@ def _finish_tool_use_behavior(
 _BASE_TOOLS: tuple[Tool, ...] = (
     think,
     load_skill,
+    read_file,
+    write_file,
+    shell_exec,
+    process_list,
+    process_output,
+    process_kill,
+    process_write_stdin,
     create_todo,
     list_todos,
     update_todo,

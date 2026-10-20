@@ -1,61 +1,42 @@
 <p align="center">
-  <a href="https://strix.ai/">
-    <img src="https://github.com/usestrix/.github/raw/main/imgs/cover.png" alt="Strix Banner" width="100%">
+  <a href="https://github.com/ZanderoDev/oh-my-strix">
+    <img src="https://raw.githubusercontent.com/ZanderoDev/oh-my-strix/main/.github/banner.png" alt="Oh My Strix Banner" width="100%">
   </a>
 </p>
 
 <div align="center">
 
-# Strix
+# Oh My Strix
 
-### The open-source AI pentesting tool. Autonomous AI hackers that find and fix your app’s vulnerabilities.
+### The autonomous AI pentesting & CTF agent. Built for real-world hacking, CTF/HTB, and flexible multi-task workflows.
 
 <br/>
 
-
+<a href="https://github.com/ZanderoDev/oh-my-strix"><img src="https://img.shields.io/badge/GitHub-ZanderoDev%2Foh--my--strix-2b9246?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a>
 <a href="https://docs.strix.ai"><img src="https://img.shields.io/badge/Docs-docs.strix.ai-2b9246?style=for-the-badge&logo=gitbook&logoColor=white" alt="Docs"></a>
-<a href="https://strix.ai"><img src="https://img.shields.io/badge/Website-strix.ai-f0f0f0?style=for-the-badge&logoColor=000000" alt="Website"></a>
-[![](https://dcbadge.limes.pink/api/server/strix-ai)](https://discord.gg/strix-ai)
-
-<a href="https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=badge_cloud"><img src="https://img.shields.io/badge/Strix%20Cloud-app.strix.ai-2b9246?style=for-the-badge&logoColor=white" alt="Strix Cloud"></a>
-<a href="https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=badge_demo"><img src="https://img.shields.io/badge/Try%20Strix%20Enterprise-555555?style=for-the-badge&logoColor=white" alt="Try Strix Enterprise"></a>
-
-<a href="https://github.com/usestrix/strix"><img src="https://img.shields.io/github/stars/usestrix/strix?style=flat-square" alt="GitHub Stars"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-3b82f6?style=flat-square" alt="License"></a>
-<a href="https://pypi.org/project/strix-agent/"><img src="https://img.shields.io/pypi/v/strix-agent?style=flat-square" alt="PyPI Version"></a>
-
-
-<a href="https://discord.gg/strix-ai"><img src="https://github.com/usestrix/.github/raw/main/imgs/Discord.png" height="40" alt="Join Discord"></a>
-<a href="https://x.com/strix_ai"><img src="https://github.com/usestrix/.github/raw/main/imgs/X.png" height="40" alt="Follow on X"></a>
-
-
-<a href="https://trendshift.io/repositories/15362?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-15362" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/15362/weekly" alt="usestrix%2Fstrix | Trendshift" width="250" height="55"/></a>
-<a href="https://trendshift.io/repositories/15362" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15362" alt="usestrix/strix | Trendshift" width="250" height="55"/></a>
 
 </div>
 
-
 > [!TIP]
-> **New!** Strix integrates seamlessly with GitHub Actions and CI/CD pipelines. Automatically scan for vulnerabilities on every pull request and block insecure code before it reaches production - [Get started with no setup required](https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=tip_ci).
+> **Oh My Strix Edition**: Enhanced with the Holy Trinity of AI Agent tooling (**`read_file`**, **`write_file`**, **`shell_exec`**), **multi-process background task execution** for long-running pentest/CTF tools (`nmap`, `gobuster`, listeners), and **direct host networking/runtime** support (e.g. `tun0` for HackTheBox/TryHackMe/local labs).
 
 ---
 
-
-## Strix Overview
+## Oh My Strix Overview
 
 Strix are autonomous AI penetration testing agents that act just like real hackers - they run your code dynamically, find vulnerabilities, and validate them through actual proofs-of-concept. Built for developers and security teams who need fast, accurate security testing without the overhead of manual pentesting or the false positives of static analysis tools.
 
 **Key Capabilities:**
 
-- **Full pentesting toolkit** - reconnaissance, exploitation, and validation out of the box
-- **Multi-agent orchestration** - teams of AI pentesters that collaborate and scale
-- **Real exploit validation** - working PoCs, not false positives like legacy vulnerability scanners
-- **Developer‑first CLI** - actionable findings with remediation guidance
-- **Auto‑fix & reporting** - generate patches and compliance-ready pentest reports
-
+- **The Holy Trinity Agent Tools** - Reliable byte-for-byte `read_file` (with line slicing & binary hex preview), `write_file` (no bash heredoc escaping bugs), and `shell_exec`.
+- **Multi-Process Background Tasks** - Run concurrent background commands (`nmap`, scanners, listeners), inspect live outputs, interact via stdin, and manage process lifecycle.
+- **CTF & HackTheBox Ready** - Native host runtime support (`STRIX_RUNTIME_BACKEND=host`) for seamless VPN tunneling (`tun0`), local network access, and red teaming practice.
+- **Full Pentesting Toolkit** - HTTP proxying (Caido), browser exploitation, custom exploit runtime, and OSINT out of the box.
+- **Multi-Agent Orchestration** - Coordinated teams of specialized AI agents that collaborate and scale across targets.
+- **Real Exploit Validation** - Verified proofs-of-concept (PoCs) without legacy scanner false positives.
 
 <br>
-
 
 <div align="center">
   <a href="https://strix.ai">
@@ -63,13 +44,12 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
   </a>
 </div>
 
-
 ## Use Cases
 
-- **Application Security Testing** - Detect and validate critical vulnerabilities in your applications
-- **Rapid Penetration Testing** - Get penetration tests done in hours, not weeks, with compliance reports
-- **Bug Bounty Automation** - Automate bug bounty research and generate PoCs for faster reporting
-- **CI/CD Integration** - Run tests in CI/CD to block vulnerabilities before reaching production
+- **CTF & Hack The Box Practice** - Interactive, multi-turn AI agent assisting with challenge solving, privilege escalation, and background services.
+- **Application Security Testing** - Detect, exploit, and validate critical vulnerabilities in web applications and APIs.
+- **Bug Bounty & Red Teaming** - Automate recon, fuzzing, port scanning, and proof-of-concept creation.
+- **Local Network & Host Pentesting** - Test internal endpoints, services, and private machines directly through host interfaces.
 
 ## 🚀 Quick Start
 
@@ -156,10 +136,13 @@ See [`AGENTS.md`](AGENTS.md) for the quick reference, [docs.strix.ai/llms.txt](h
 
 Strix agents come equipped with a comprehensive offensive security toolkit - the same tools used by professional penetration testers and ethical hackers:
 
+- **Holy Trinity Tools (`read_file`, `write_file`, `shell_exec`)** - Fast, exact file inspection and modification with line range slicing and binary detection, eliminating escaping bugs.
+- **Process Manager & Background Execution** - Multi-task asynchronous shell command execution (`process_list`, `process_output`, `process_write_stdin`, `process_kill`) for persistent scanners and interactive utilities.
+- **Host Runtime Integration** - Native execution on Linux host (`STRIX_RUNTIME_BACKEND=host`) for direct access to network devices (`tun0`, local subnets, raw sockets).
 - **HTTP Interception Proxy** - Full request/response manipulation and analysis with Caido
 - **Browser Exploitation** - Automated browser for testing XSS, CSRF, clickjacking, and auth bypass flows
-- **Shell & Command Execution** - Interactive terminal for exploit development and post-exploitation
-- **Custom Exploit Runtime** - Python sandbox for writing and validating proof-of-concept exploits
+- **Interactive Shell & Terminal** - Full interactive terminal for exploit development and post-exploitation
+- **Custom Exploit Runtime** - Python runtime for writing and validating proof-of-concept exploits
 - **Reconnaissance & OSINT** - Automated attack surface mapping, subdomain enumeration, and fingerprinting
 - **Static & Dynamic Code Analysis** - SAST + DAST capabilities for comprehensive application security testing
 - **Vulnerability Knowledge Base** - Structured findings with CVSS scoring and OWASP classification
