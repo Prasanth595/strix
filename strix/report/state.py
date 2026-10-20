@@ -1045,6 +1045,23 @@ def record_llm_request(event: "LlmRequestEvent") -> None:
     )
 
 
+def record_tool_call(
+    *, started_at: datetime, agent_id: str | None, tool: str, duration_ms: int
+) -> None:
+    """Each tool call's timing, kept in run.json's ``tool_calls``."""
+    report_state = get_global_report_state()
+    if report_state is None:
+        return
+    report_state.run_record.setdefault("tool_calls", []).append(
+        {
+            "started_at": started_at.isoformat(),
+            "agent_id": agent_id,
+            "tool": tool,
+            "duration_ms": duration_ms,
+        }
+    )
+
+
 def record_openrouter_provider(provider: Any, usage: Any) -> None:
     """Tally which upstream provider served a stream, from its final usage chunk.
 

@@ -19,6 +19,7 @@ from strix.config.models import (
     _configure_litellm_compatibility,
     _install_openrouter_stream_cost_capture,
 )
+from strix.core.hooks import ReportUsageHooks
 from strix.llm import request_log
 from strix.report.state import (
     ReportState,
@@ -508,3 +509,22 @@ def test_request_timings_land_in_run_record() -> None:
             "retry_attempt": 0,
         }
     ]
+
+
+async def test_tool_call_timings_land_in_run_record() -> None:
+    hooks = ReportUsageHooks(model="m", record_tool_timings=True)
+    context = SimpleNamespace(tool_call_id="call-1", context={"agent_id": "agent-1"})
+    tool = SimpleNamespace(name="terminal_execute")
+    state = ReportState.__new__(ReportState)
+    state.run_record = {}
+    try:
+        set_global_report_state(state)
+        await hooks.on_tool_start(context, MagicMock(), tool)  # type: ignore[arg-type]
+        await hooks.on_tool_end(context, MagicMock(), tool, "ok")  # type: ignore[arg-type]
+    finally:
+        set_global_report_state(None)
+
+    [entry] = state.run_record["tool_calls"]
+    assert entry["agent_id"] == "agent-1"
+    assert entry["tool"] == "terminal_execute"
+    assert entry["duration_ms"] >= 0

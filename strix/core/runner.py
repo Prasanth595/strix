@@ -419,6 +419,7 @@ async def run_strix_scan(
             max_turns=max_turns,
             interactive=interactive,
             budget_policy=budget_policy,
+            record_tool_timings=settings.telemetry.run_record_timings,
         )
         coordinator.set_budget_limit_setter(hooks.set_max_budget_usd)
         if interactive and budget_policy != "pause":
