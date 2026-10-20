@@ -270,6 +270,19 @@ def _candidate_skill_files(skill_name: str) -> list[Path]:
     return _bare_skill_files(skill_name)
 
 
+def skill_wrap_up_after_turns(skill_names: list[str]) -> int | None:
+    """Smallest ``wrap_up_after_turns`` set in these skills' frontmatter, if any."""
+    turns = []
+    for skill_name in skill_names:
+        candidates = _candidate_skill_files(skill_name)
+        if len(candidates) != 1:
+            continue
+        value = _read_skill_metadata(candidates[0]).get("wrap_up_after_turns", "")
+        if value.isdigit() and int(value) > 0:
+            turns.append(int(value))
+    return min(turns, default=None)
+
+
 def load_skills(skill_names: list[str], *, supports_images: bool = True) -> dict[str, str]:
     """Load skill markdown bodies (frontmatter stripped) by name.
 

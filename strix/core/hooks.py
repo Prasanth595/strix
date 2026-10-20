@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 LLM_TURN_KEY = "llm_turn"
+# Set on a sub-agent's context from its skills (see ``skill_wrap_up_after_turns``).
+WRAP_UP_AFTER_TURNS_KEY = "wrap_up_after_turns"
+_WRAP_UP_REPEAT_TURNS = 5
 
 # ``BudgetPolicy`` decides what happens when the accumulated LLM cost reaches
 # ``max_budget_usd``.
@@ -35,6 +38,7 @@ LLM_TURN_KEY = "llm_turn"
 # same call when the operator raises the limit or resumes.
 __all__ = [
     "LLM_TURN_KEY",
+    "WRAP_UP_AFTER_TURNS_KEY",
     "BudgetExceededError",
     "BudgetPausedError",
     "BudgetPolicy",
@@ -207,6 +211,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         context.context[LLM_TURN_KEY] = int(context.context.get(LLM_TURN_KEY, 0)) + 1
         try:
             self._maybe_warn_turns(context, input_items)
+            self._maybe_nudge_wrap_up(context, input_items)
             self._maybe_warn_budget(context, input_items)
         except Exception:
             logger.exception("budget/turn warning injection failed")
@@ -267,6 +272,26 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             f"[{_urgency(stage)}] Turn budget: {turns_used}/{self._max_turns} used ({pct}%). "
             f"About {remaining} turn(s) remain before this agent is force-stopped and any "
             f"in-progress work is discarded. {_wrapup_directive(context, stage)}"
+        )
+        input_items.append({"role": "user", "content": content})
+
+    def _maybe_nudge_wrap_up(
+        self,
+        context: RunContextWrapper[dict[str, Any]],
+        input_items: list[TResponseInputItem],
+    ) -> None:
+        """A soft nudge, never a stop: at the turn a skill asks for, then every few turns."""
+        after = context.context.get(WRAP_UP_AFTER_TURNS_KEY)
+        requests = getattr(getattr(context, "usage", None), "requests", None)
+        if not isinstance(after, int) or not isinstance(requests, int):
+            return
+        turns_used = requests + 1
+        if turns_used < after or (turns_used - after) % _WRAP_UP_REPEAT_TURNS:
+            return
+        content = (
+            f"[NOTICE] You have used {turns_used} turns. Wrap up soon: take only the steps "
+            "you still need to answer your task, then call agent_finish with what you have, "
+            "listing anything unresolved in open_items instead of tracing it further."
         )
         input_items.append({"role": "user", "content": content})
 

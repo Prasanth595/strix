@@ -24,6 +24,7 @@ from openai import (
 
 from strix.config import codex
 from strix.core.hooks import (
+    WRAP_UP_AFTER_TURNS_KEY,
     BudgetExceededError,
     BudgetPausedError,
     SubagentBudgetReservedError,
@@ -39,6 +40,7 @@ from strix.core.sessions import (
 )
 from strix.llm import request_log
 from strix.llm.compaction import is_context_overflow, maybe_compact
+from strix.skills import skill_wrap_up_after_turns
 
 
 if TYPE_CHECKING:
@@ -434,6 +436,7 @@ async def spawn_child_agent(
             task=task,
             parent_history=parent_history,
         ),
+        wrap_up_after_turns=skill_wrap_up_after_turns(skills),
         event_sink=event_sink,
         hooks=hooks,
     )
@@ -512,6 +515,7 @@ async def respawn_subagents(
                 task=str(md.get("task", "")),
                 initial_input=[],
                 start_parked=start_parked,
+                wrap_up_after_turns=skill_wrap_up_after_turns(child_skills),
                 event_sink=event_sink,
                 hooks=hooks,
             )
@@ -1163,6 +1167,7 @@ async def _start_child_runner(
     task: str,
     initial_input: Any,
     start_parked: bool = False,
+    wrap_up_after_turns: int | None = None,
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
 ) -> None:
@@ -1174,6 +1179,7 @@ async def _start_child_runner(
     child_ctx["agent_id"] = child_id
     child_ctx["parent_id"] = parent_id
     child_ctx["task"] = task
+    child_ctx[WRAP_UP_AFTER_TURNS_KEY] = wrap_up_after_turns
 
     async def _child_loop() -> None:
         # A budget stop is a clean scan-wide shutdown, not a child failure: the
