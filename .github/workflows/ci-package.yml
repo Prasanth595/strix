@@ -33,7 +33,9 @@ jobs:
       - name: Install into a clean environment and run the CLI
         run: |
           uv venv --python 3.12 /tmp/strix-smoke
-          uv pip install --python /tmp/strix-smoke/bin/python dist/*.whl
+          uv export --frozen --no-hashes --no-emit-project --no-dev -o /tmp/strix-smoke-constraints.txt
+          uv pip install --python /tmp/strix-smoke/bin/python \
+            --constraint /tmp/strix-smoke-constraints.txt dist/*.whl
           /tmp/strix-smoke/bin/strix --version
           /tmp/strix-smoke/bin/strix --help >/dev/null
       - name: Vertex AI and Bedrock dependencies install with the wheel
