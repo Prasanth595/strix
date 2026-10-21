@@ -23,6 +23,7 @@ from strix.runtime.docker_client import StrixDockerSandboxClient, StrixDockerSan
 _IMAGE = "strix-sandbox:test"
 _CAIDO_PORT = 48080
 _GATEWAY = {"host.docker.internal": "host-gateway"}
+_CAIDO_LOOPBACK_LABEL = "strix.sandbox.caido-loopback"
 
 
 def _clear_network_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -30,12 +31,18 @@ def _clear_network_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("STRIX_DOCKER_EXTRA_HOSTS", raising=False)
 
 
-def _client() -> tuple[StrixDockerSandboxClient, MagicMock, MagicMock]:
+def _client(
+    *, caido_loopback: bool = False
+) -> tuple[StrixDockerSandboxClient, MagicMock, MagicMock]:
     docker = MagicMock()
     container = MagicMock()
     container.id = "container-1"
     container.short_id = "container-1"
     docker.containers.create.return_value = container
+    if caido_loopback:
+        image = MagicMock()
+        image.attrs = {"Config": {"Labels": {_CAIDO_LOOPBACK_LABEL: "true"}}}
+        docker.images.get.return_value = image
     return StrixDockerSandboxClient(docker), docker, container
 
 
@@ -53,7 +60,7 @@ async def _create_session(
     _clear_network_env(monkeypatch)
     if network is not None:
         monkeypatch.setenv("STRIX_DOCKER_SANDBOX_NETWORK", network)
-    client, docker, container = _client()
+    client, docker, container = _client(caido_loopback=network == "host")
     session = await client.create(
         options=DockerSandboxClientOptions(_IMAGE, (_CAIDO_PORT,)),
         manifest=manifest,
@@ -112,6 +119,19 @@ async def test_host_network_resolves_loopback_without_container_ip(
     with pytest.raises(ExposedPortUnavailableError) as exc_info:
         await session.resolve_exposed_port(_CAIDO_PORT)
     assert exc_info.value.context["detail"] == "container_reload_failed"
+
+
+@pytest.mark.asyncio
+async def test_host_network_rejects_image_without_caido_loopback_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_network_env(monkeypatch)
+    monkeypatch.setenv("STRIX_DOCKER_SANDBOX_NETWORK", "host")
+    client, docker, _container = _client()
+    docker.images.get.return_value.attrs = {"Config": {"Labels": None}}
+    with pytest.raises(ValueError, match="caido-loopback"):
+        await client._create_container(_IMAGE, exposed_ports=(_CAIDO_PORT,))
+    docker.containers.create.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -203,7 +223,7 @@ async def test_extra_hosts_merge_with_gateway(
     if network is not None:
         monkeypatch.setenv("STRIX_DOCKER_SANDBOX_NETWORK", network)
     monkeypatch.setenv("STRIX_DOCKER_EXTRA_HOSTS", raw)
-    client, docker, _container = _client()
+    client, docker, _container = _client(caido_loopback=network == "host")
 
     await client._create_container(_IMAGE, exposed_ports=(_CAIDO_PORT,))
 
@@ -245,6 +265,11 @@ async def test_blank_extra_hosts_keep_gateway_mapping(
         ('{"   ": "10.0.0.1"}', ValueError, r"empty hostname"),
         (
             '{"host.docker.internal": "10.0.0.1"}',
+            ValueError,
+            r"cannot replace the reserved host\.docker\.internal mapping",
+        ),
+        (
+            '{"HOST.Docker.Internal": "10.0.0.1"}',
             ValueError,
             r"cannot replace the reserved host\.docker\.internal mapping",
         ),

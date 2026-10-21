@@ -194,6 +194,8 @@ export STRIX_DOCKER_EXTRA_HOSTS='{"app.htb":"10.10.11.42"}'
 
 Host mode binds Caido to the fixed port `48080`, so only one host-mode scan can run on a daemon at a time. The default bridge network publishes that container port to a free localhost port for each scan.
 
+Host mode requires image label `strix.sandbox.caido-loopback=true`. That label marks an entrypoint that honors `STRIX_CAIDO_LISTEN_ADDRESS` and binds Caido to loopback. A cached older image is rejected instead of listening on every host interface.
+
 ## Sandbox Configuration
 
 <ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">

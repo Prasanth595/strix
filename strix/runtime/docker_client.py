@@ -67,6 +67,7 @@ _DAEMON_LOOPBACK = "127.0.0.1"
 # Read by containers/docker-entrypoint.sh. Set only for host networking so the
 # unauthenticated Caido listener stays on loopback instead of 0.0.0.0.
 _CAIDO_LISTEN_ADDRESS_ENV = "STRIX_CAIDO_LISTEN_ADDRESS"
+_CAIDO_LOOPBACK_LABEL = "strix.sandbox.caido-loopback"
 
 
 def _sandbox_network() -> str | None:
@@ -90,10 +91,29 @@ def _apply_host_network_listener(create_kwargs: dict[str, Any]) -> None:
     create_kwargs["environment"] = environment
 
 
-def _apply_sandbox_network(create_kwargs: dict[str, Any]) -> None:
+def _require_host_network_image(docker_client: Any, image: str) -> None:
+    """Reject host mode when a cached image may still bind Caido on 0.0.0.0."""
+    try:
+        attrs = docker_client.images.get(image).attrs
+    except docker_errors.ImageNotFound:
+        attrs = None
+    config = attrs.get("Config") if isinstance(attrs, dict) else None
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    if isinstance(labels, dict) and labels.get(_CAIDO_LOOPBACK_LABEL) == "true":
+        return
+    raise ValueError(
+        f"{_SANDBOX_NETWORK_ENV}=host requires label {_CAIDO_LOOPBACK_LABEL}=true "
+        f"so {_CAIDO_LISTEN_ADDRESS_ENV} is honored. Cached older images bind "
+        "Caido to 0.0.0.0 with guest access."
+    )
+
+
+def _apply_sandbox_network(create_kwargs: dict[str, Any], docker_client: Any, image: str) -> None:
     network = _sandbox_network()
     if not network:
         return
+    if network == _HOST_NETWORK_NAME:
+        _require_host_network_image(docker_client, image)
     create_kwargs["network"] = network
     create_kwargs.pop("ports", None)
     if network == _HOST_NETWORK_NAME:
@@ -137,7 +157,7 @@ def _extra_hostname(name: object) -> str:
     hostname = name.strip()
     if not hostname:
         raise ValueError(f"{_EXTRA_HOSTS_ENV} contains an empty hostname")
-    if hostname == _HOST_GATEWAY_HOSTNAME:
+    if hostname.lower() == _HOST_GATEWAY_HOSTNAME:
         raise ValueError(
             f"{_EXTRA_HOSTS_ENV} cannot replace the reserved {_HOST_GATEWAY_HOSTNAME} mapping"
         )
@@ -334,7 +354,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
                 cap_add.append(cap)
 
         _apply_extra_hosts(create_kwargs)
-        _apply_sandbox_network(create_kwargs)
+        _apply_sandbox_network(create_kwargs, self.docker_client, image)
         _apply_resource_limits(create_kwargs)
         _apply_log_limits(create_kwargs)
         _apply_run_labels(create_kwargs)
